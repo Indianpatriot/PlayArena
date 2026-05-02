@@ -15,13 +15,13 @@ import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
-import { GlassCard, LogoBadge, LocationPicker } from '@/components';
+import { GlassCard, LogoBadge, LocationPicker, ProfileMenu } from '@/components';
 import { useAuth } from '@/hooks/useAuth';
 import { LocationData } from '@/services/location';
 
 const { width } = Dimensions.get('window');
 
-// ── Sport category definitions (no counts — those come from API) ──────────────
+// ── Sport category definitions ────────────────────────────────────────────────
 const SPORT_CATEGORIES = [
   { icon: 'soccer', label: 'Football', color: '#00FF88' },
   { icon: 'cricket', label: 'Cricket', color: '#FFB800' },
@@ -64,7 +64,7 @@ function VenueSkeleton() {
   );
 }
 
-// ── Empty state for no venues ─────────────────────────────────────────────────
+// ── Empty state ───────────────────────────────────────────────────────────────
 function EmptyVenuesState({ onRetry }: { onRetry: () => void }) {
   return (
     <View style={styles.emptyState}>
@@ -90,6 +90,7 @@ export default function DashboardScreen() {
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loadingVenues, setLoadingVenues] = useState(false);
+  const [profileMenuVisible, setProfileMenuVisible] = useState(false);
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
@@ -105,15 +106,14 @@ export default function DashboardScreen() {
     ]).start();
   }, []);
 
-  // Simulate venue fetch when location or sport changes
+  // Fetch venues when location/sport changes
   const fetchVenues = useCallback(() => {
     if (!location) return;
     setLoadingVenues(true);
     setVenues([]);
-    // TODO: Replace with real API call — e.g. fetch(`/api/venues?city=${location.city}&sport=${selectedSport}`)
+    // TODO: Replace with real API call
     setTimeout(() => {
       setLoadingVenues(false);
-      // Leave venues empty to show the empty state — real data will come from API
     }, 1200);
   }, [location, selectedSport]);
 
@@ -121,10 +121,10 @@ export default function DashboardScreen() {
     fetchVenues();
   }, [fetchVenues]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await logout();
     router.replace('/welcome');
-  };
+  }, [logout, router]);
 
   const isOwner = user?.role === 'owner';
 
@@ -133,12 +133,26 @@ export default function DashboardScreen() {
       <LinearGradient colors={['#0A0F10', '#080C10']} style={StyleSheet.absoluteFillObject} />
 
       {/* Sticky Header */}
-      <Animated.View style={[styles.header, { paddingTop: insets.top + Spacing.sm, opacity: headerOpacity }]}>
-        <LinearGradient colors={['#0D1A12', '#080C10']} style={StyleSheet.absoluteFillObject} />
+      <Animated.View
+        style={[
+          styles.header,
+          { paddingTop: insets.top + Spacing.sm, opacity: headerOpacity },
+        ]}
+      >
+        <LinearGradient
+          colors={['#0D1A12', '#080C10']}
+          style={StyleSheet.absoluteFillObject}
+        />
 
         <View style={styles.headerTop}>
           <LogoBadge size="sm" />
-          <Pressable style={styles.avatarBtn} onPress={handleLogout} hitSlop={8}>
+
+          {/* Avatar → opens ProfileMenu (no logout on tap) */}
+          <Pressable
+            style={styles.avatarBtn}
+            onPress={() => setProfileMenuVisible(true)}
+            hitSlop={12}
+          >
             <LinearGradient
               colors={isOwner ? ['#00BFFF', '#0080CC'] : ['#00FF88', '#00CC6A']}
               style={styles.avatar}
@@ -165,7 +179,9 @@ export default function DashboardScreen() {
         {!isOwner ? (
           <Pressable style={styles.searchBar} hitSlop={4}>
             <MaterialIcons name="search" size={20} color={Colors.textMuted} />
-            <Text style={styles.searchPlaceholder}>Search venues, sports, locations...</Text>
+            <Text style={styles.searchPlaceholder}>
+              Search venues, sports, locations...
+            </Text>
             <View style={styles.filterBtn}>
               <MaterialIcons name="tune" size={16} color={Colors.neonGreen} />
             </View>
@@ -175,12 +191,20 @@ export default function DashboardScreen() {
 
       {/* Scrollable Content */}
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xl }}
+        style={styles.scrollView}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: insets.bottom + Spacing.xl },
+        ]}
         showsVerticalScrollIndicator={false}
+        bounces
       >
-        <Animated.View style={{ opacity: contentOpacity, transform: [{ translateY: contentY }] }}>
-          {isOwner ? <OwnerDashboard /> : (
+        <Animated.View
+          style={{ opacity: contentOpacity, transform: [{ translateY: contentY }] }}
+        >
+          {isOwner ? (
+            <OwnerDashboard />
+          ) : (
             <PlayerDashboard
               selectedSport={selectedSport}
               onSelectSport={(s) => setSelectedSport(s === selectedSport ? null : s)}
@@ -192,6 +216,14 @@ export default function DashboardScreen() {
           )}
         </Animated.View>
       </ScrollView>
+
+      {/* Profile Menu */}
+      <ProfileMenu
+        visible={profileMenuVisible}
+        onClose={() => setProfileMenuVisible(false)}
+        user={user}
+        onLogout={handleLogout}
+      />
     </View>
   );
 }
@@ -225,6 +257,7 @@ function PlayerDashboard({
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.horizontalList}
+          nestedScrollEnabled
         >
           {SPORT_CATEGORIES.map((sport) => {
             const isActive = selectedSport === sport.label;
@@ -263,16 +296,12 @@ function PlayerDashboard({
             {selectedSport ? `${selectedSport} Venues` : 'Nearby Venues'}
           </Text>
           {selectedSport ? (
-            <Pressable
-              hitSlop={8}
-              onPress={() => onSelectSport(selectedSport)}
-            >
+            <Pressable hitSlop={8} onPress={() => onSelectSport(selectedSport)}>
               <Text style={styles.clearFilter}>Clear</Text>
             </Pressable>
           ) : null}
         </View>
 
-        {/* No location selected */}
         {!locationSelected ? (
           <GlassCard variant="neon" padding={20}>
             <View style={styles.locationPrompt}>
@@ -284,7 +313,6 @@ function PlayerDashboard({
             </View>
           </GlassCard>
         ) : loadingVenues ? (
-          // Loading skeletons
           <View style={styles.skeletonList}>
             <VenueSkeleton />
             <VenueSkeleton />
@@ -314,7 +342,9 @@ const VenueCard = React.memo(function VenueCard({ venue }: { venue: Venue }) {
         </View>
         <View style={styles.venueInfo}>
           <Text style={styles.venueName}>{venue.name}</Text>
-          <Text style={styles.venueSport}>{venue.sport} · {venue.distance}</Text>
+          <Text style={styles.venueSport}>
+            {venue.sport} · {venue.distance}
+          </Text>
           <View style={styles.venueBottom}>
             <View style={styles.ratingChip}>
               <MaterialIcons name="star" size={10} color="#FFB800" />
@@ -351,7 +381,6 @@ function OwnerDashboard() {
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Quick Overview</Text>
 
-      {/* Stats grid */}
       <View style={styles.statsGrid}>
         {stats.map((s) => (
           <View key={s.label} style={[styles.statCard, { borderColor: s.color + '30' }]}>
@@ -366,7 +395,6 @@ function OwnerDashboard() {
         ))}
       </View>
 
-      {/* API placeholder notice */}
       <GlassCard variant="blue" padding={16}>
         <View style={styles.apiNotice}>
           <MaterialIcons name="info-outline" size={18} color={Colors.electricBlue} />
@@ -376,7 +404,6 @@ function OwnerDashboard() {
         </View>
       </GlassCard>
 
-      {/* Quick Actions */}
       <View style={styles.ownerActions}>
         {[
           { icon: 'add-circle-outline', label: 'Add Slot', color: Colors.neonGreen },
@@ -385,7 +412,9 @@ function OwnerDashboard() {
           { icon: 'settings', label: 'Settings', color: Colors.textSecondary },
         ].map((a) => (
           <Pressable key={a.label} style={styles.ownerActionBtn}>
-            <View style={[styles.ownerActionIcon, { backgroundColor: a.color + '18' }]}>
+            <View
+              style={[styles.ownerActionIcon, { backgroundColor: a.color + '18' }]}
+            >
               <MaterialIcons name={a.icon as any} size={22} color={a.color} />
             </View>
             <Text style={styles.ownerActionLabel}>{a.label}</Text>
@@ -414,11 +443,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  avatarBtn: {},
+  avatarBtn: {
+    // Pressable wraps the gradient — keep it simple
+  },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -464,6 +495,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Scroll
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
+  // Sections
   section: {
     paddingHorizontal: Spacing.lg,
     marginTop: Spacing.lg,

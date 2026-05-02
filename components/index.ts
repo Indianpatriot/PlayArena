@@ -5,3 +5,4 @@ export { GlassCard } from './ui/GlassCard';
 export { LogoBadge } from './ui/LogoBadge';
 export { RoleToggle } from './ui/RoleToggle';
 export { LocationPicker } from './ui/LocationPicker';
+export { ProfileMenu } from './ui/ProfileMenu';
