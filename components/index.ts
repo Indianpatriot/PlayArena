@@ -6,3 +6,5 @@ export { LogoBadge } from './ui/LogoBadge';
 export { RoleToggle } from './ui/RoleToggle';
 export { LocationPicker } from './ui/LocationPicker';
 export { ProfileMenu } from './ui/ProfileMenu';
+export { AddSlotModal } from './ui/AddSlotModal';
+export type { SlotData } from './ui/AddSlotModal';

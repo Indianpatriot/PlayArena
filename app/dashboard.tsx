@@ -15,7 +15,7 @@ import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
-import { GlassCard, LogoBadge, LocationPicker, ProfileMenu } from '@/components';
+import { GlassCard, LogoBadge, LocationPicker, ProfileMenu, AddSlotModal, SlotData } from '@/components';
 import { useAuth } from '@/hooks/useAuth';
 import { LocationData } from '@/services/location';
 
@@ -91,6 +91,8 @@ export default function DashboardScreen() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loadingVenues, setLoadingVenues] = useState(false);
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
+  const [addSlotVisible, setAddSlotVisible] = useState(false);
+  const [savedSlots, setSavedSlots] = useState<SlotData[]>([]);
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
@@ -120,6 +122,10 @@ export default function DashboardScreen() {
   useEffect(() => {
     fetchVenues();
   }, [fetchVenues]);
+
+  const handleSlotSave = useCallback((data: SlotData) => {
+    setSavedSlots((prev) => [...prev, data]);
+  }, []);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -203,7 +209,7 @@ export default function DashboardScreen() {
           style={{ opacity: contentOpacity, transform: [{ translateY: contentY }] }}
         >
           {isOwner ? (
-            <OwnerDashboard />
+            <OwnerDashboard onAddSlot={() => setAddSlotVisible(true)} />
           ) : (
             <PlayerDashboard
               selectedSport={selectedSport}
@@ -216,6 +222,13 @@ export default function DashboardScreen() {
           )}
         </Animated.View>
       </ScrollView>
+
+      {/* Add Slot Modal */}
+      <AddSlotModal
+        visible={addSlotVisible}
+        onClose={() => setAddSlotVisible(false)}
+        onSave={handleSlotSave}
+      />
 
       {/* Profile Menu */}
       <ProfileMenu
@@ -369,7 +382,7 @@ const VenueCard = React.memo(function VenueCard({ venue }: { venue: Venue }) {
 });
 
 // ── Owner Dashboard ───────────────────────────────────────────────────────────
-function OwnerDashboard() {
+function OwnerDashboard({ onAddSlot }: { onAddSlot: () => void }) {
   const stats = [
     { label: 'Today Bookings', value: '—', icon: 'calendar-today', color: '#00FF88' },
     { label: "Today's Revenue", value: '—', icon: 'trending-up', color: '#00BFFF' },
@@ -406,12 +419,12 @@ function OwnerDashboard() {
 
       <View style={styles.ownerActions}>
         {[
-          { icon: 'add-circle-outline', label: 'Add Slot', color: Colors.neonGreen },
-          { icon: 'bar-chart', label: 'Analytics', color: Colors.electricBlue },
-          { icon: 'people', label: 'Bookings', color: '#FFB800' },
-          { icon: 'settings', label: 'Settings', color: Colors.textSecondary },
+          { icon: 'add-circle-outline', label: 'Add Slot', color: Colors.neonGreen, onPress: onAddSlot },
+          { icon: 'bar-chart', label: 'Analytics', color: Colors.electricBlue, onPress: undefined as any },
+          { icon: 'people', label: 'Bookings', color: '#FFB800', onPress: undefined as any },
+          { icon: 'settings', label: 'Settings', color: Colors.textSecondary, onPress: undefined as any },
         ].map((a) => (
-          <Pressable key={a.label} style={styles.ownerActionBtn}>
+          <Pressable key={a.label} style={styles.ownerActionBtn} onPress={a.onPress}>
             <View
               style={[styles.ownerActionIcon, { backgroundColor: a.color + '18' }]}
             >
