@@ -119,13 +119,6 @@ export default function PlayerLoginScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Back Button */}
-          <Animated.View style={{ opacity: headerOpacity }}>
-            <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={12}>
-              <MaterialIcons name="arrow-back-ios" size={18} color={Colors.textPrimary} />
-            </Pressable>
-          </Animated.View>
-
           {/* Header */}
           <Animated.View style={[styles.header, { opacity: headerOpacity }]}>
             <View style={styles.playerBadge}>
