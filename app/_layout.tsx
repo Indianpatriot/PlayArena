@@ -53,6 +53,7 @@ export default function RootLayout() {
               <Stack.Screen name="player-login" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="owner-login" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="signup" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="dashboard" options={{ animation: 'fade' }} />
             </Stack>
           </AuthGate>

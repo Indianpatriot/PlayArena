@@ -15,6 +15,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
+import { FacilitiesRulesSheet, FacilitiesRulesData } from './FacilitiesRulesSheet';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TimeSlotRow {
@@ -22,7 +23,7 @@ interface TimeSlotRow {
   startTime: string;
   endTime: string;
   courts: string;
-  prices: string[];     // per-court prices
+  prices: string[];
   samePrice: boolean;
   commonPrice: string;
 }
@@ -34,6 +35,8 @@ export interface SlotData {
     endTime: string;
     courts: { label: string; price: string }[];
   }[];
+  facilities: string[];
+  rules: string[];
 }
 
 interface AddSlotModalProps {
@@ -44,14 +47,14 @@ interface AddSlotModalProps {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SPORTS = [
-  { key: 'Cricket',   icon: 'cricket',    color: '#FFB800' },
-  { key: 'Football',  icon: 'soccer',     color: '#00FF88' },
-  { key: 'Badminton', icon: 'badminton',  color: '#C084FC' },
-  { key: 'Volleyball',icon: 'volleyball', color: '#00BFFF' },
-  { key: 'Tennis',    icon: 'tennis',     color: '#FF6B6B' },
+  { key: 'Cricket',    icon: 'cricket',    color: '#FFB800' },
+  { key: 'Football',   icon: 'soccer',     color: '#00FF88' },
+  { key: 'Badminton',  icon: 'badminton',  color: '#C084FC' },
+  { key: 'Volleyball', icon: 'volleyball', color: '#00BFFF' },
+  { key: 'Tennis',     icon: 'tennis',     color: '#FF6B6B' },
 ];
 
-// Generate time options every 30 min from 5:00 AM → 11:30 PM
+// Preset times every 30 min: 5:00 AM → 11:00 PM
 const TIME_OPTIONS: string[] = (() => {
   const opts: string[] = [];
   for (let h = 5; h <= 23; h++) {
@@ -66,13 +69,28 @@ const TIME_OPTIONS: string[] = (() => {
 })();
 
 function timeToMinutes(t: string): number {
-  const [timePart, period] = t.split(' ');
+  const parts = t.trim().toUpperCase().split(' ');
+  if (parts.length < 2) return 0;
+  const [timePart, period] = parts;
   const [hStr, mStr] = timePart.split(':');
   let h = parseInt(hStr, 10);
   const m = parseInt(mStr, 10);
+  if (isNaN(h) || isNaN(m)) return 0;
   if (period === 'PM' && h !== 12) h += 12;
   if (period === 'AM' && h === 12) h = 0;
   return h * 60 + m;
+}
+
+// Parse manual time entry — supports "6:35 AM", "10:15pm", "6:35AM"
+function parseManualTime(raw: string): string | null {
+  const cleaned = raw.trim().toUpperCase().replace(/\s+/g, ' ');
+  const match = cleaned.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (!match) return null;
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const period = match[3];
+  if (h < 1 || h > 12 || m < 0 || m > 59) return null;
+  return `${h}:${m < 10 ? '0' + m : m} ${period}`;
 }
 
 function uid(): string {
@@ -103,24 +121,74 @@ interface TimePickerProps {
 
 function TimePicker({ visible, selected, onSelect, onClose, title, minTime }: TimePickerProps) {
   const insets = useSafeAreaInsets();
-  const minMinutes = minTime ? timeToMinutes(minTime) + 30 : -Infinity;
+  const minMinutes = minTime ? timeToMinutes(minTime) + 1 : -Infinity;
+  const [manualInput, setManualInput] = useState('');
+  const [manualError, setManualError] = useState('');
 
   const filteredTimes = useMemo(
     () => TIME_OPTIONS.filter((t) => timeToMinutes(t) >= minMinutes),
     [minMinutes]
   );
 
+  const handleManualSubmit = () => {
+    const parsed = parseManualTime(manualInput);
+    if (!parsed) {
+      setManualError('Format: H:MM AM or PM  (e.g. 6:35 AM)');
+      return;
+    }
+    if (timeToMinutes(parsed) <= (minTime ? timeToMinutes(minTime) : -Infinity)) {
+      setManualError('Must be after the start time');
+      return;
+    }
+    setManualError('');
+    setManualInput('');
+    onSelect(parsed);
+    handleClose();
+  };
+
+  const handleClose = () => {
+    setManualInput('');
+    setManualError('');
+    onClose();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={tp.overlay}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={handleClose} />
         <View style={[tp.sheet, { paddingBottom: insets.bottom + 16 }]}>
           <View style={tp.header}>
             <Text style={tp.title}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={12}>
+            <Pressable onPress={handleClose} hitSlop={12}>
               <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
             </Pressable>
           </View>
+
+          {/* Manual input */}
+          <View style={tp.manualRow}>
+            <TextInput
+              style={[tp.manualInput, manualError ? tp.manualInputError : null]}
+              value={manualInput}
+              onChangeText={(v) => { setManualInput(v); setManualError(''); }}
+              placeholder="Custom: e.g. 6:35 AM"
+              placeholderTextColor={Colors.textMuted}
+              onSubmitEditing={handleManualSubmit}
+              returnKeyType="done"
+            />
+            <Pressable style={tp.manualBtn} onPress={handleManualSubmit}>
+              <LinearGradient colors={['#00FF88', '#00CC6A']} style={tp.manualBtnGrad}>
+                <MaterialIcons name="check" size={16} color={Colors.bgPrimary} />
+              </LinearGradient>
+            </Pressable>
+          </View>
+          {manualError ? <Text style={tp.manualError}>{manualError}</Text> : null}
+
+          <View style={tp.orRow}>
+            <View style={tp.orLine} />
+            <Text style={tp.orText}>or pick preset</Text>
+            <View style={tp.orLine} />
+          </View>
+
           <FlatList
             data={filteredTimes}
             keyExtractor={(t) => t}
@@ -131,7 +199,7 @@ function TimePicker({ visible, selected, onSelect, onClose, title, minTime }: Ti
               return (
                 <Pressable
                   style={[tp.option, isSelected && tp.optionSelected]}
-                  onPress={() => { onSelect(item); onClose(); }}
+                  onPress={() => { onSelect(item); handleClose(); }}
                 >
                   {isSelected && (
                     <LinearGradient
@@ -165,7 +233,7 @@ const tp = StyleSheet.create({
     borderTopRightRadius: 24,
     borderTopWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
-    maxHeight: 380,
+    maxHeight: 460,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
   },
@@ -176,12 +244,64 @@ const tp = StyleSheet.create({
     paddingBottom: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    marginBottom: 4,
+    marginBottom: Spacing.sm,
   },
   title: {
     fontSize: Typography.fontSizes.base,
     fontWeight: '800',
     color: Colors.textPrimary,
+  },
+  manualRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  manualInput: {
+    flex: 1,
+    height: 44,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.inputBg,
+    paddingHorizontal: Spacing.md,
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSizes.sm,
+  },
+  manualInputError: {
+    borderColor: Colors.error,
+  },
+  manualBtn: {
+    borderRadius: Radius.lg,
+    overflow: 'hidden',
+  },
+  manualBtnGrad: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manualError: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.error,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginVertical: Spacing.sm,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  orText: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.textMuted,
+    fontWeight: '500',
   },
   option: {
     flexDirection: 'row',
@@ -192,9 +312,7 @@ const tp = StyleSheet.create({
     borderRadius: Radius.md,
     overflow: 'hidden',
   },
-  optionSelected: {
-    borderRadius: Radius.md,
-  },
+  optionSelected: { borderRadius: Radius.md },
   optionText: {
     fontSize: Typography.fontSizes.base,
     color: Colors.textSecondary,
@@ -246,7 +364,6 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
         style={StyleSheet.absoluteFillObject}
       />
 
-      {/* Header row */}
       <View style={sr.cardHeader}>
         <View style={sr.slotBadge}>
           <Text style={sr.slotBadgeText}>Slot {index + 1}</Text>
@@ -283,9 +400,7 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
 
       {/* Courts count */}
       <View style={sr.courtsRow}>
-        <Text style={sr.label}>
-          {courtsNum > 1 ? `Courts Available` : `Slots Available`}
-        </Text>
+        <Text style={sr.label}>{courtsNum > 1 ? 'Courts Available' : 'Slots Available'}</Text>
         <View style={sr.courtsCounter}>
           <Pressable
             hitSlop={8}
@@ -373,7 +488,6 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
         )}
       </View>
 
-      {/* Courts preview (when > 1) */}
       {courtsNum > 1 && (
         <View style={sr.courtsPreview}>
           {Array.from({ length: courtsNum }, (_, i) => (
@@ -384,7 +498,6 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
         </View>
       )}
 
-      {/* Time pickers */}
       <TimePicker
         visible={startPickerOpen}
         selected={row.startTime}
@@ -433,9 +546,7 @@ const sr = StyleSheet.create({
     color: Colors.neonGreen,
     fontWeight: '700',
   },
-  removeBtn: {
-    padding: 2,
-  },
+  removeBtn: { padding: 2 },
   timeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -501,9 +612,7 @@ const sr = StyleSheet.create({
     fontWeight: '800',
     fontSize: Typography.fontSizes.base,
   },
-  priceSection: {
-    gap: Spacing.sm,
-  },
+  priceSection: { gap: Spacing.sm },
   priceTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -558,9 +667,7 @@ const sr = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: Typography.fontSizes.xs,
   },
-  courtPriceGrid: {
-    gap: 8,
-  },
+  courtPriceGrid: { gap: 8 },
   courtPriceRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -593,18 +700,17 @@ const sr = StyleSheet.create({
 });
 
 // ── Main Modal ────────────────────────────────────────────────────────────────
-export const AddSlotModal: React.FC<AddSlotModalProps> = ({
-  visible,
-  onClose,
-  onSave,
-}) => {
+export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, onSave }) => {
   const insets = useSafeAreaInsets();
   const [selectedSport, setSelectedSport] = useState('');
   const [rows, setRows] = useState<TimeSlotRow[]>([makeRow()]);
+  const [facilitiesRules, setFacilitiesRules] = useState<FacilitiesRulesData>({ facilities: [], rules: [] });
+  const [frSheetVisible, setFrSheetVisible] = useState(false);
 
   const reset = useCallback(() => {
     setSelectedSport('');
     setRows([makeRow()]);
+    setFacilitiesRules({ facilities: [], rules: [] });
   }, []);
 
   const handleClose = useCallback(() => {
@@ -644,7 +750,6 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
         }
       }
     }
-    // Check overlapping slots
     for (let i = 0; i < rows.length - 1; i++) {
       for (let j = i + 1; j < rows.length; j++) {
         const a = rows[i], b = rows[j];
@@ -675,33 +780,30 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
         }));
         return { startTime: r.startTime, endTime: r.endTime, courts };
       }),
+      facilities: facilitiesRules.facilities,
+      rules: facilitiesRules.rules,
     };
     onSave(data);
     reset();
     onClose();
-  }, [validate, selectedSport, rows, onSave, onClose, reset]);
+  }, [validate, selectedSport, rows, facilitiesRules, onSave, onClose, reset]);
 
   const sport = SPORTS.find((s) => s.key === selectedSport);
+  const frCount = facilitiesRules.facilities.length + facilitiesRules.rules.length;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={handleClose}
-    >
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
       <View style={styles.overlay}>
         <Pressable style={StyleSheet.absoluteFillObject} onPress={handleClose} />
 
         <View style={[styles.sheet, { paddingBottom: insets.bottom + Spacing.lg }]}>
-          {/* Handle */}
           <View style={styles.handle} />
 
           {/* Header */}
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Add New Slot</Text>
-              <Text style={styles.subtitle}>Set sport, time, courts & pricing</Text>
+              <Text style={styles.subtitle}>Sport · Time · Courts · Pricing</Text>
             </View>
             <Pressable onPress={handleClose} hitSlop={12} style={styles.closeBtn}>
               <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
@@ -713,7 +815,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            {/* ── Sport Selection ──────────────────────────────────────────── */}
+            {/* Sport Selection */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Select Sport</Text>
               <View style={styles.sportsGrid}>
@@ -724,32 +826,15 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
                       key={s.key}
                       style={[
                         styles.sportCard,
-                        {
-                          borderColor: isActive ? s.color : s.color + '30',
-                          backgroundColor: isActive ? s.color + '18' : Colors.bgCard,
-                        },
+                        { borderColor: isActive ? s.color : s.color + '30', backgroundColor: isActive ? s.color + '18' : Colors.bgCard },
                       ]}
                       onPress={() => setSelectedSport(s.key)}
                     >
                       {isActive && (
-                        <LinearGradient
-                          colors={[s.color + '20', s.color + '06']}
-                          style={StyleSheet.absoluteFillObject}
-                        />
+                        <LinearGradient colors={[s.color + '20', s.color + '06']} style={StyleSheet.absoluteFillObject} />
                       )}
-                      <MaterialCommunityIcons
-                        name={s.icon as any}
-                        size={28}
-                        color={isActive ? s.color : s.color + '80'}
-                      />
-                      <Text
-                        style={[
-                          styles.sportCardLabel,
-                          isActive && { color: s.color },
-                        ]}
-                      >
-                        {s.key}
-                      </Text>
+                      <MaterialCommunityIcons name={s.icon as any} size={28} color={isActive ? s.color : s.color + '80'} />
+                      <Text style={[styles.sportCardLabel, isActive && { color: s.color }]}>{s.key}</Text>
                       {isActive && (
                         <View style={[styles.sportCheck, { backgroundColor: s.color }]}>
                           <MaterialIcons name="check" size={10} color={Colors.bgPrimary} />
@@ -761,13 +846,11 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
               </View>
             </View>
 
-            {/* ── Slot Rows ────────────────────────────────────────────────── */}
+            {/* Slot rows */}
             {selectedSport ? (
               <View style={styles.section}>
                 <View style={styles.sectionTitleRow}>
-                  <Text style={styles.sectionTitle}>
-                    {sport ? `${sport.key} ` : ''}Time Slots
-                  </Text>
+                  <Text style={styles.sectionTitle}>{sport?.key} Time Slots</Text>
                   <View style={[styles.sportDot, { backgroundColor: sport?.color ?? Colors.neonGreen }]} />
                 </View>
 
@@ -790,18 +873,41 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
                     <Text style={styles.addMoreText}>Add Another Time Slot</Text>
                   </Pressable>
                 )}
+
+                {/* Facilities & Rules */}
+                <Pressable style={styles.frBtn} onPress={() => setFrSheetVisible(true)}>
+                  <LinearGradient
+                    colors={['rgba(0,191,255,0.08)', 'rgba(0,191,255,0.02)']}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+                  <View style={styles.frIconWrap}>
+                    <MaterialIcons name="sports" size={20} color={Colors.electricBlue} />
+                  </View>
+                  <View style={styles.frBtnContent}>
+                    <Text style={styles.frBtnTitle}>Facilities &amp; Rules</Text>
+                    <Text style={styles.frBtnSub}>
+                      {frCount > 0
+                        ? `${facilitiesRules.facilities.length} facilities · ${facilitiesRules.rules.length} rules configured`
+                        : 'Add amenities and booking rules for players'}
+                    </Text>
+                  </View>
+                  {frCount > 0 && (
+                    <View style={styles.frBadge}>
+                      <Text style={styles.frBadgeText}>{frCount}</Text>
+                    </View>
+                  )}
+                  <MaterialIcons name="chevron-right" size={18} color={Colors.textMuted} />
+                </Pressable>
               </View>
             ) : (
               <View style={styles.sportHint}>
                 <MaterialCommunityIcons name="arrow-up" size={20} color={Colors.textMuted} />
-                <Text style={styles.sportHintText}>
-                  Select a sport above to configure time slots
-                </Text>
+                <Text style={styles.sportHintText}>Select a sport above to configure time slots</Text>
               </View>
             )}
           </ScrollView>
 
-          {/* ── Footer CTA ───────────────────────────────────────────────────── */}
+          {/* Footer */}
           <View style={styles.footer}>
             <Pressable style={styles.cancelBtn} onPress={handleClose}>
               <Text style={styles.cancelText}>Cancel</Text>
@@ -811,12 +917,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
               onPress={handleSave}
               disabled={!selectedSport}
             >
-              <LinearGradient
-                colors={['#00FF88', '#00CC6A']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.saveBtnGrad}
-              >
+              <LinearGradient colors={['#00FF88', '#00CC6A']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.saveBtnGrad}>
                 <MaterialIcons name="check" size={18} color={Colors.bgPrimary} />
                 <Text style={styles.saveText}>Save Slot</Text>
               </LinearGradient>
@@ -824,6 +925,14 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({
           </View>
         </View>
       </View>
+
+      {/* Facilities & Rules Sheet */}
+      <FacilitiesRulesSheet
+        visible={frSheetVisible}
+        onClose={() => setFrSheetVisible(false)}
+        onSave={setFacilitiesRules}
+        initial={facilitiesRules}
+      />
     </Modal>
   );
 };
@@ -884,9 +993,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.md,
     gap: Spacing.md,
   },
-  section: {
-    gap: Spacing.md,
-  },
+  section: { gap: Spacing.md },
   sectionTitle: {
     fontSize: Typography.fontSizes.sm,
     fontWeight: '800',
@@ -938,9 +1045,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  slotList: {
-    gap: Spacing.sm,
-  },
+  slotList: { gap: Spacing.sm },
   addMoreBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -957,6 +1062,52 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSizes.sm,
     color: Colors.neonGreen,
     fontWeight: '700',
+  },
+  // Facilities & Rules button
+  frBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.25)',
+    padding: Spacing.md,
+    overflow: 'hidden',
+  },
+  frIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,191,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  frBtnContent: {
+    flex: 1,
+    gap: 2,
+  },
+  frBtnTitle: {
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  frBtnSub: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.textMuted,
+    lineHeight: 16,
+  },
+  frBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.electricBlue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  frBadgeText: {
+    fontSize: 11,
+    color: Colors.bgPrimary,
+    fontWeight: '800',
   },
   sportHint: {
     flexDirection: 'row',
@@ -997,9 +1148,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     overflow: 'hidden',
   },
-  saveBtnDisabled: {
-    opacity: 0.45,
-  },
+  saveBtnDisabled: { opacity: 0.45 },
   saveBtnGrad: {
     height: 52,
     flexDirection: 'row',

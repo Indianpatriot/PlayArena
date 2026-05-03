@@ -183,7 +183,7 @@ export default function PlayerLoginScreen() {
             {/* Forgot Password */}
             <Pressable
               style={styles.forgotWrap}
-              onPress={() => showAlert('Reset Password', 'Password reset link sent to your email.')}
+              onPress={() => router.push({ pathname: '/forgot-password', params: { email } })}
               hitSlop={8}
             >
               <Text style={styles.forgotText}>Forgot Password?</Text>
@@ -204,6 +204,18 @@ export default function PlayerLoginScreen() {
                 <Text style={styles.signupLink}>Create account</Text>
               </Pressable>
             </View>
+
+            {/* Ground Owner Link */}
+            <View style={styles.ownerRow}>
+              <View style={styles.ownerDivider} />
+              <Text style={styles.ownerDividerText}>Are you a Ground Owner?</Text>
+              <View style={styles.ownerDivider} />
+            </View>
+            <Pressable style={styles.ownerBtn} onPress={() => router.push('/owner-login')}>
+              <MaterialCommunityIcons name="stadium-variant" size={16} color={Colors.electricBlue} />
+              <Text style={styles.ownerBtnText}>Ground Owner Login</Text>
+              <MaterialIcons name="arrow-forward-ios" size={12} color={Colors.electricBlue} />
+            </Pressable>
           </Animated.View>
 
           {/* Bottom security note */}
@@ -355,6 +367,39 @@ const styles = StyleSheet.create({
   },
   signupLink: {
     color: Colors.neonGreen,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '700',
+  },
+  ownerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: Spacing.xs,
+  },
+  ownerDivider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  ownerDividerText: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.textMuted,
+    fontWeight: '500',
+  },
+  ownerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.3)',
+    backgroundColor: 'rgba(0,191,255,0.06)',
+    marginBottom: Spacing.xs,
+  },
+  ownerBtnText: {
+    color: Colors.electricBlue,
     fontSize: Typography.fontSizes.sm,
     fontWeight: '700',
   },

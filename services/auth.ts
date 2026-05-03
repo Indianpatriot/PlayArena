@@ -76,5 +76,26 @@ export const AuthService = {
     if (!email.includes('@')) {
       throw new Error('Please enter a valid email address.');
     }
+    // Mock: OTP sent to email
+  },
+
+  async verifyOTP(email: string, otp: string): Promise<void> {
+    await delay(1000);
+    // Mock: accept any 6-digit code for demo
+    if (otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+      throw new Error('Invalid OTP. Please check and try again.');
+    }
+    // Demo: reject 000000 as invalid
+    if (otp === '000000') {
+      throw new Error('OTP has expired. Please request a new one.');
+    }
+  },
+
+  async resetPassword(email: string, otp: string, newPassword: string): Promise<void> {
+    await delay(1200);
+    if (newPassword.length < 8) {
+      throw new Error('Password must be at least 8 characters.');
+    }
+    // Mock: password reset successful
   },
 };

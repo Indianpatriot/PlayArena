@@ -208,7 +208,7 @@ export default function OwnerLoginScreen() {
 
             <Pressable
               style={styles.forgotWrap}
-              onPress={() => showAlert('Reset Password', 'Password reset link sent to your business email.')}
+              onPress={() => router.push({ pathname: '/forgot-password', params: { email } })}
               hitSlop={8}
             >
               <Text style={styles.forgotText}>Forgot Password?</Text>

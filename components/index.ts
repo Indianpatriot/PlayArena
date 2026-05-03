@@ -8,3 +8,5 @@ export { LocationPicker } from './ui/LocationPicker';
 export { ProfileMenu } from './ui/ProfileMenu';
 export { AddSlotModal } from './ui/AddSlotModal';
 export type { SlotData } from './ui/AddSlotModal';
+export { FacilitiesRulesSheet } from './ui/FacilitiesRulesSheet';
+export type { FacilitiesRulesData } from './ui/FacilitiesRulesSheet';
