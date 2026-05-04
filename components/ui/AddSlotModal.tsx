@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
 import { FacilitiesRulesSheet, FacilitiesRulesData } from './FacilitiesRulesSheet';
+import { PREDEFINED_SPORTS, SportEntry, loadCustomSports, saveCustomSport } from '@/constants/sports';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TimeSlotRow {
@@ -46,12 +47,10 @@ interface AddSlotModalProps {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const SPORTS = [
-  { key: 'Cricket',    icon: 'cricket',    color: '#FFB800' },
-  { key: 'Football',   icon: 'soccer',     color: '#00FF88' },
-  { key: 'Badminton',  icon: 'badminton',  color: '#C084FC' },
-  { key: 'Volleyball', icon: 'volleyball', color: '#00BFFF' },
-  { key: 'Tennis',     icon: 'tennis',     color: '#FF6B6B' },
+const OTHERS_KEY = '__others__';
+const SPORTS_WITH_OTHERS = [
+  ...PREDEFINED_SPORTS,
+  { key: OTHERS_KEY, icon: 'dots-horizontal-circle', color: '#A78BFA', type: 'predefined' as const },
 ];
 
 // Preset times every 30 min: 5:00 AM → 11:00 PM
@@ -331,9 +330,10 @@ interface SlotRowProps {
   canRemove: boolean;
   onUpdate: (id: string, patch: Partial<TimeSlotRow>) => void;
   onRemove: (id: string) => void;
+  isPool?: boolean;
 }
 
-function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
+function SlotRow({ row, index, canRemove, onUpdate, onRemove, isPool }: SlotRowProps) {
   const [startPickerOpen, setStartPickerOpen] = useState(false);
   const [endPickerOpen, setEndPickerOpen] = useState(false);
 
@@ -398,9 +398,13 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
         </Pressable>
       </View>
 
-      {/* Courts count */}
+      {/* Courts / Lanes count */}
       <View style={sr.courtsRow}>
-        <Text style={sr.label}>{courtsNum > 1 ? 'Courts Available' : 'Slots Available'}</Text>
+        <Text style={sr.label}>
+          {isPool
+            ? courtsNum > 1 ? 'Lanes Available' : 'Pool Session'
+            : courtsNum > 1 ? 'Courts Available' : 'Slots Available'}
+        </Text>
         <View style={sr.courtsCounter}>
           <Pressable
             hitSlop={8}
@@ -492,7 +496,7 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove }: SlotRowProps) {
         <View style={sr.courtsPreview}>
           {Array.from({ length: courtsNum }, (_, i) => (
             <View key={i} style={sr.courtChip}>
-              <Text style={sr.courtChipText}>Court {i + 1}</Text>
+              <Text style={sr.courtChipText}>{isPool ? `Lane ${i + 1}` : `Court ${i + 1}`}</Text>
             </View>
           ))}
         </View>
@@ -706,11 +710,20 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
   const [rows, setRows] = useState<TimeSlotRow[]>([makeRow()]);
   const [facilitiesRules, setFacilitiesRules] = useState<FacilitiesRulesData>({ facilities: [], rules: [] });
   const [frSheetVisible, setFrSheetVisible] = useState(false);
+  const [customSports, setCustomSports] = useState<SportEntry[]>([]);
+  const [customSportName, setCustomSportName] = useState('');
+  const [customSportError, setCustomSportError] = useState('');
+
+  React.useEffect(() => {
+    if (visible) loadCustomSports().then(setCustomSports).catch(() => {});
+  }, [visible]);
 
   const reset = useCallback(() => {
     setSelectedSport('');
     setRows([makeRow()]);
     setFacilitiesRules({ facilities: [], rules: [] });
+    setCustomSportName('');
+    setCustomSportError('');
   }, []);
 
   const handleClose = useCallback(() => {
@@ -730,8 +743,14 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     setRows((prev) => [...prev, makeRow()]);
   }, []);
 
+  const effectiveSport = selectedSport === OTHERS_KEY ? customSportName.trim() : selectedSport;
+  const selectedSportEntry = SPORTS_WITH_OTHERS.find((s) => s.key === selectedSport)
+    ?? customSports.find((s) => s.key === selectedSport);
+  const isPool = selectedSportEntry?.isPool ?? false;
+
   const validate = useCallback((): string | null => {
     if (!selectedSport) return 'Please select a sport.';
+    if (selectedSport === OTHERS_KEY && !customSportName.trim()) return 'Please enter a custom sport name.';
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (!r.startTime) return `Slot ${i + 1}: Select a start time.`;
@@ -762,20 +781,26 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
       }
     }
     return null;
-  }, [selectedSport, rows]);
+  }, [selectedSport, customSportName, rows]);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     const err = validate();
     if (err) {
       Alert.alert('Validation Error', err);
       return;
     }
+    let sportName = effectiveSport;
+    if (selectedSport === OTHERS_KEY && customSportName.trim()) {
+      const updated = await saveCustomSport(customSportName.trim(), customSports);
+      if (updated) setCustomSports(updated);
+    }
     const data: SlotData = {
-      sport: selectedSport,
+      sport: sportName,
       slots: rows.map((r) => {
         const n = parseInt(r.courts, 10);
+        const unitLabel = isPool ? (n > 1 ? 'Lane' : 'Pool Session') : (n > 1 ? 'Court' : 'Slot');
         const courts = Array.from({ length: n }, (_, i) => ({
-          label: n > 1 ? `Court ${i + 1}` : 'Slot',
+          label: n > 1 ? `${unitLabel} ${i + 1}` : unitLabel,
           price: r.samePrice || n === 1 ? `₹${r.commonPrice}/hr` : `₹${r.prices[i] ?? r.commonPrice}/hr`,
         }));
         return { startTime: r.startTime, endTime: r.endTime, courts };
@@ -786,9 +811,13 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     onSave(data);
     reset();
     onClose();
-  }, [validate, selectedSport, rows, facilitiesRules, onSave, onClose, reset]);
+  }, [validate, effectiveSport, selectedSport, customSportName, customSports, rows, isPool, facilitiesRules, onSave, onClose, reset]);
 
-  const sport = SPORTS.find((s) => s.key === selectedSport);
+  const allSportsForDisplay = [
+    ...SPORTS_WITH_OTHERS,
+    ...customSports.filter((cs) => !PREDEFINED_SPORTS.some((p) => p.key === cs.key)),
+  ];
+  const sport = allSportsForDisplay.find((s) => s.key === selectedSport);
   const frCount = facilitiesRules.facilities.length + facilitiesRules.rules.length;
 
   return (
@@ -819,8 +848,9 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Select Sport</Text>
               <View style={styles.sportsGrid}>
-                {SPORTS.map((s) => {
+                {allSportsForDisplay.map((s) => {
                   const isActive = selectedSport === s.key;
+                  const displayLabel = s.key === OTHERS_KEY ? 'Others' : s.key;
                   return (
                     <Pressable
                       key={s.key}
@@ -828,13 +858,17 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                         styles.sportCard,
                         { borderColor: isActive ? s.color : s.color + '30', backgroundColor: isActive ? s.color + '18' : Colors.bgCard },
                       ]}
-                      onPress={() => setSelectedSport(s.key)}
+                      onPress={() => {
+                        setSelectedSport(s.key);
+                        setCustomSportName('');
+                        setCustomSportError('');
+                      }}
                     >
                       {isActive && (
                         <LinearGradient colors={[s.color + '20', s.color + '06']} style={StyleSheet.absoluteFillObject} />
                       )}
                       <MaterialCommunityIcons name={s.icon as any} size={28} color={isActive ? s.color : s.color + '80'} />
-                      <Text style={[styles.sportCardLabel, isActive && { color: s.color }]}>{s.key}</Text>
+                      <Text style={[styles.sportCardLabel, isActive && { color: s.color }]}>{displayLabel}</Text>
                       {isActive && (
                         <View style={[styles.sportCheck, { backgroundColor: s.color }]}>
                           <MaterialIcons name="check" size={10} color={Colors.bgPrimary} />
@@ -844,14 +878,54 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                   );
                 })}
               </View>
+
+              {/* Others — custom sport name input */}
+              {selectedSport === OTHERS_KEY && (
+                <View style={styles.othersInputWrap}>
+                  <View style={styles.othersInputRow}>
+                    <TextInput
+                      style={[styles.othersInput, customSportError ? { borderColor: Colors.error } : null]}
+                      value={customSportName}
+                      onChangeText={(v) => { setCustomSportName(v); setCustomSportError(''); }}
+                      placeholder="Enter sport name (e.g. Pickleball)"
+                      placeholderTextColor={Colors.textMuted}
+                      returnKeyType="done"
+                      maxLength={40}
+                    />
+                    <MaterialCommunityIcons name="pencil" size={16} color={Colors.textMuted} style={{ marginRight: 4 }} />
+                  </View>
+                  {customSportError ? (
+                    <Text style={styles.othersError}>{customSportError}</Text>
+                  ) : null}
+                  {/* Previously saved custom sports as suggestions */}
+                  {customSports.length > 0 && (
+                    <View style={styles.suggestionsWrap}>
+                      <Text style={styles.suggestionsLabel}>Recent:</Text>
+                      <View style={styles.suggestionsRow}>
+                        {customSports.map((cs) => (
+                          <Pressable
+                            key={cs.key}
+                            style={styles.suggestionChip}
+                            onPress={() => setCustomSportName(cs.key)}
+                          >
+                            <Text style={styles.suggestionChipText}>{cs.key}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
 
             {/* Slot rows */}
-            {selectedSport ? (
+            {selectedSport && (selectedSport !== OTHERS_KEY || effectiveSport) ? (
               <View style={styles.section}>
                 <View style={styles.sectionTitleRow}>
-                  <Text style={styles.sectionTitle}>{sport?.key} Time Slots</Text>
-                  <View style={[styles.sportDot, { backgroundColor: sport?.color ?? Colors.neonGreen }]} />
+                  <Text style={styles.sectionTitle}>
+                    {selectedSport === OTHERS_KEY ? effectiveSport : (sport?.key ?? selectedSport)} Time Slots
+                  </Text>
+                  <View style={[styles.sportDot, { backgroundColor: sport?.color ?? '#A78BFA' }]} />
                 </View>
 
                 <View style={styles.slotList}>
@@ -863,6 +937,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                       canRemove={rows.length > 1}
                       onUpdate={updateRow}
                       onRemove={removeRow}
+                      isPool={isPool}
                     />
                   ))}
                 </View>
@@ -1044,6 +1119,57 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  othersInputWrap: {
+    marginTop: Spacing.sm,
+    gap: Spacing.xs,
+  },
+  othersInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: '#A78BFA40',
+    paddingHorizontal: Spacing.md,
+  },
+  othersInput: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: Typography.fontSizes.sm,
+    color: Colors.textPrimary,
+  },
+  othersError: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.error,
+    marginLeft: 4,
+  },
+  suggestionsWrap: {
+    gap: 6,
+    marginTop: 4,
+  },
+  suggestionsLabel: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.textMuted,
+    fontWeight: '600',
+  },
+  suggestionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  suggestionChip: {
+    backgroundColor: 'rgba(167,139,250,0.14)',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: '#A78BFA40',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  suggestionChipText: {
+    fontSize: Typography.fontSizes.xs,
+    color: '#A78BFA',
+    fontWeight: '600',
   },
   slotList: { gap: Spacing.sm },
   addMoreBtn: {

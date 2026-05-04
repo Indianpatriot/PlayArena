@@ -18,17 +18,14 @@ import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
 import { GlassCard, LogoBadge, LocationPicker, ProfileMenu, AddSlotModal, SlotData } from '@/components';
 import { useAuth } from '@/hooks/useAuth';
 import { LocationData } from '@/services/location';
+import { PREDEFINED_SPORTS } from '@/constants/sports';
 
 const { width } = Dimensions.get('window');
 
 // ── Sport category definitions ────────────────────────────────────────────────
 const SPORT_CATEGORIES = [
-  { icon: 'soccer', label: 'Football', color: '#00FF88' },
-  { icon: 'cricket', label: 'Cricket', color: '#FFB800' },
-  { icon: 'tennis', label: 'Tennis', color: '#FF6B6B' },
-  { icon: 'basketball', label: 'Basketball', color: '#00BFFF' },
-  { icon: 'badminton', label: 'Badminton', color: '#C084FC' },
-  { icon: 'table-tennis', label: 'Table Tennis', color: '#FB923C' },
+  ...PREDEFINED_SPORTS.map((s) => ({ icon: s.icon, label: s.key, color: s.color })),
+  { icon: 'dots-horizontal', label: 'Others', color: '#A78BFA' },
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
