@@ -109,6 +109,8 @@ export default function SignupScreen() {
         showAlert('Check Your Email', err.message, [
           { text: 'Go to Login', onPress: () => router.replace('/player-login') },
         ]);
+      } else if (err.code === 'rate_limit') {
+        showAlert('Too Many Attempts', err.message);
       } else if (err.message?.toLowerCase().includes('already exists')) {
         showAlert('Account Exists', err.message, [
           { text: 'Sign In', onPress: () => router.replace(role === 'owner' ? '/owner-login' : '/player-login') },

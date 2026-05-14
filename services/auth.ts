@@ -122,16 +122,38 @@ export const AuthService = {
 
     if (error) {
       const msg = error.message ?? '';
+      const lmsg = msg.toLowerCase();
+
       if (
-        msg.toLowerCase().includes('already registered') ||
-        msg.toLowerCase().includes('user already registered') ||
-        msg.toLowerCase().includes('email already')
+        lmsg.includes('already registered') ||
+        lmsg.includes('user already registered') ||
+        lmsg.includes('email already') ||
+        error.code === 'user_already_exists'
       ) {
         throw new Error('An account with this email already exists. Please sign in instead.');
       }
-      if (msg.toLowerCase().includes('network') || msg.toLowerCase().includes('fetch')) {
+
+      // Supabase email rate limit (free tier sends max ~3 emails/hr)
+      if (
+        lmsg.includes('rate limit') ||
+        lmsg.includes('over_email_send_rate_limit') ||
+        lmsg.includes('for security purposes') ||
+        lmsg.includes('email rate') ||
+        error.code === 'over_email_send_rate_limit' ||
+        (error as any).status === 429
+      ) {
+        throw Object.assign(
+          new Error(
+            'Too many signup attempts. Please wait a few minutes and try again.\n\nTip: Disable "Email Confirmations" in your Supabase Dashboard (Authentication → Settings) to remove this limit.'
+          ),
+          { code: 'rate_limit' }
+        );
+      }
+
+      if (lmsg.includes('network') || lmsg.includes('fetch')) {
         throw new Error('Network error. Please check your connection and try again.');
       }
+
       throw new Error(msg || 'Signup failed. Please try again.');
     }
 
@@ -139,14 +161,22 @@ export const AuthService = {
       throw new Error('Signup failed. Please try again.');
     }
 
-    if (!authData.session) {
-      throw Object.assign(
-        new Error('Account created! Please check your email to confirm your account before signing in.'),
-        { code: 'confirm_email' }
-      );
+    // Email confirmation disabled → session returned immediately, user is logged in
+    if (authData.session) {
+      return mapSupabaseUser(authData.user, data.role);
     }
 
-    return mapSupabaseUser(authData.user, data.role);
+    // Email confirmation enabled → session is null, user must confirm email
+    // Check if user was actually just created vs already existing (Supabase quirk)
+    if (authData.user.identities && authData.user.identities.length === 0) {
+      // identities array is empty → email already registered but unconfirmed
+      throw new Error('An account with this email already exists. Please sign in or check your email for a confirmation link.');
+    }
+
+    throw Object.assign(
+      new Error('Account created! Please check your email to confirm your account before signing in.'),
+      { code: 'confirm_email' }
+    );
   },
 
   async socialLogin(_provider: 'google' | 'apple'): Promise<AuthUser> {
