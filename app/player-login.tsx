@@ -70,7 +70,14 @@ export default function PlayerLoginScreen() {
       setUser(user);
       router.replace('/dashboard');
     } catch (err: any) {
-      showAlert('Login Failed', err.message);
+      if (err.code === 'account_not_found') {
+        showAlert('Account Not Found', err.message, [
+          { text: 'Sign Up', onPress: () => router.push('/signup') },
+          { text: 'Try Again', style: 'cancel' },
+        ]);
+      } else {
+        showAlert('Login Failed', err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -83,7 +90,7 @@ export default function PlayerLoginScreen() {
       setUser(user);
       router.replace('/dashboard');
     } catch (err: any) {
-      showAlert('Error', err.message);
+      showAlert('Not Available', err.message);
     } finally {
       setLoading(false);
     }

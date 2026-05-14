@@ -1,5 +1,5 @@
 import React, { createContext, useState, ReactNode, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '@/services/supabase';
 import { AuthUser, UserRole } from '@/services/auth';
 
 const SESSION_KEY = '@playarena_session';
@@ -14,41 +14,48 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function mapSessionUser(supabaseUser: any): AuthUser {
+  return {
+    id: supabaseUser.id,
+    name: supabaseUser.user_metadata?.name ?? supabaseUser.email?.split('@')[0] ?? 'User',
+    email: supabaseUser.email ?? '',
+    role: (supabaseUser.user_metadata?.role as UserRole) ?? 'player',
+    avatar: supabaseUser.user_metadata?.avatar_url,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Restore session on mount
   useEffect(() => {
-    (async () => {
-      try {
-        const stored = await AsyncStorage.getItem(SESSION_KEY);
-        if (stored) {
-          setUserState(JSON.parse(stored));
-        }
-      } catch {
-        // Ignore storage errors — treat as unauthenticated
-      } finally {
-        setIsLoading(false);
+    // Restore session from Supabase on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUserState(mapSessionUser(session.user));
       }
-    })();
+      setIsLoading(false);
+    });
+
+    // Listen for auth state changes (sign in, sign out, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUserState(mapSessionUser(session.user));
+      } else {
+        setUserState(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const setUser = async (u: AuthUser | null) => {
+  const setUser = (u: AuthUser | null) => {
     setUserState(u);
-    try {
-      if (u) {
-        await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(u));
-      } else {
-        await AsyncStorage.removeItem(SESSION_KEY);
-      }
-    } catch {
-      // Non-critical — session won't persist but auth state is in memory
-    }
   };
 
   const logout = async () => {
-    await setUser(null);
+    await supabase.auth.signOut();
+    setUserState(null);
   };
 
   return (

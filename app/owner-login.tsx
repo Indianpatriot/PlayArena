@@ -74,7 +74,14 @@ export default function OwnerLoginScreen() {
       setUser(user);
       router.replace('/dashboard');
     } catch (err: any) {
-      showAlert('Login Failed', err.message);
+      if (err.code === 'account_not_found') {
+        showAlert('Account Not Found', err.message, [
+          { text: 'Register Venue', onPress: () => router.push('/signup') },
+          { text: 'Try Again', style: 'cancel' },
+        ]);
+      } else {
+        showAlert('Login Failed', err.message);
+      }
     } finally {
       setLoading(false);
     }

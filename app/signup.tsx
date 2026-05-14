@@ -105,7 +105,18 @@ export default function SignupScreen() {
       setUser(user);
       router.replace('/dashboard');
     } catch (err: any) {
-      showAlert('Signup Failed', err.message);
+      if (err.code === 'confirm_email') {
+        showAlert('Check Your Email', err.message, [
+          { text: 'Go to Login', onPress: () => router.replace('/player-login') },
+        ]);
+      } else if (err.message?.toLowerCase().includes('already exists')) {
+        showAlert('Account Exists', err.message, [
+          { text: 'Sign In', onPress: () => router.replace(role === 'owner' ? '/owner-login' : '/player-login') },
+          { text: 'Cancel', style: 'cancel' },
+        ]);
+      } else {
+        showAlert('Signup Failed', err.message);
+      }
     } finally {
       setLoading(false);
     }
