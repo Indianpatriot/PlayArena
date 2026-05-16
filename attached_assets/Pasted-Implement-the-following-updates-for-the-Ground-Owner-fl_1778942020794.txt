@@ -1,0 +1,85 @@
+Implement the following updates for the Ground Owner flow in PlayArena. Keep existing UI theme and Supabase integration intact. Do not break current functionality.
+
+1. Custom Sports for Ground Owner
+
+* Ground owner should not be limited to predefined sports only.
+* Add an option called:
+  “+ Add Custom Sport”
+* Owner can enter a sport name manually (example: Swimming, Skating, Pickleball, Kabaddi, Hockey, Others).
+* Custom sports should:
+
+  * be saved and reusable for that owner
+  * appear in owner dashboard sport selection
+  * appear in Add Slot form dropdown
+  * persist in Supabase
+* Keep existing sports (Cricket, Football, Badminton, etc.) and merge custom sports with them.
+
+2. Replace Analytics Button with Slots Button
+
+* Remove/replace the current “Analytics” button in owner dashboard.
+* Add a new button called:
+  “Slots”
+* Purpose:
+  Ground owner must be able to view all slots already saved in database.
+* Fetch slots dynamically from Supabase `slots` table.
+* Show:
+
+  * Sport
+  * Court Name
+  * Date
+  * Start Time → End Time
+  * Price
+  * Number of courts/slots
+  * Facilities
+* Add actions:
+
+  * Edit Slot
+  * Delete Slot
+* No static/mock data.
+* Use logged-in owner id to fetch only their slots.
+
+3. Fix Add Slot Form (Important)
+   Currently date and court name are not being taken.
+
+Add missing fields in Add Slot form:
+
+* Court Name input
+  Example:
+  Court 1, Turf A, Swimming Lane 2
+
+* Date input
+  Allow owner to select booking date.
+  Format:
+  DD/MM/YYYY or date picker
+
+Ensure these fields:
+
+* are visible in UI
+* validated before save
+* sent to Supabase
+* stored in `slots` table
+* displayed later in Slots screen
+
+4. Supabase Integration
+   Update save slot logic so these fields are saved:
+
+* owner_id
+* sport
+* court_name
+* slot_date
+* start_time
+* end_time
+* total_slots
+* price
+* facilities
+* rules
+
+5. Important Constraints
+
+* Do not change sporty UI theme.
+* Do not remove current slot functionality.
+* Do not use static/mock slot data.
+* Keep code clean and avoid duplicate components.
+* Preserve existing working login/session flow.
+* Ensure no TypeScript errors.
+* Keep implementation lightweight and production-ready.
