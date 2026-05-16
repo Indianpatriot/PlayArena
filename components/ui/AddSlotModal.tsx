@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
 import { FacilitiesRulesSheet, FacilitiesRulesData } from './FacilitiesRulesSheet';
 import { PREDEFINED_SPORTS, SportEntry, loadCustomSports, saveCustomSport } from '@/constants/sports';
+import { supabase } from '@/services/supabase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface TimeSlotRow {
@@ -31,6 +32,8 @@ interface TimeSlotRow {
 
 export interface SlotData {
   sport: string;
+  courtName: string;
+  slotDate: string;
   slots: {
     startTime: string;
     endTime: string;
@@ -713,6 +716,8 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
   const [customSports, setCustomSports] = useState<SportEntry[]>([]);
   const [customSportName, setCustomSportName] = useState('');
   const [customSportError, setCustomSportError] = useState('');
+  const [courtName, setCourtName] = useState('');
+  const [slotDate, setSlotDate] = useState('');
 
   React.useEffect(() => {
     if (visible) loadCustomSports().then(setCustomSports).catch(() => {});
@@ -724,6 +729,8 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     setFacilitiesRules({ facilities: [], rules: [] });
     setCustomSportName('');
     setCustomSportError('');
+    setCourtName('');
+    setSlotDate('');
   }, []);
 
   const handleClose = useCallback(() => {
@@ -751,6 +758,16 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
   const validate = useCallback((): string | null => {
     if (!selectedSport) return 'Please select a sport.';
     if (selectedSport === OTHERS_KEY && !customSportName.trim()) return 'Please enter a custom sport name.';
+    if (!courtName.trim()) return 'Please enter a court / lane name.';
+    if (!slotDate.trim()) return 'Please enter a booking date.';
+    const dateParts = slotDate.split('/');
+    if (dateParts.length !== 3 || dateParts.some((p) => isNaN(Number(p)))) {
+      return 'Date format must be DD/MM/YYYY (e.g. 25/06/2025).';
+    }
+    const [d, m, y] = dateParts.map(Number);
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 2024) {
+      return 'Please enter a valid date in DD/MM/YYYY format.';
+    }
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (!r.startTime) return `Slot ${i + 1}: Select a start time.`;
@@ -789,19 +806,62 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
       Alert.alert('Validation Error', err);
       return;
     }
+
     let sportName = effectiveSport;
     if (selectedSport === OTHERS_KEY && customSportName.trim()) {
       const updated = await saveCustomSport(customSportName.trim(), customSports);
       if (updated) setCustomSports(updated);
     }
+
+    // Convert DD/MM/YYYY → YYYY-MM-DD for Supabase
+    const [day, month, year] = slotDate.split('/');
+    const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+
+    // Get current user id
+    const { data: userData } = await supabase.auth.getUser();
+    const ownerId = userData?.user?.id;
+
+    // Build insert rows (one per time slot row)
+    const inserts = rows.map((r) => {
+      const n = parseInt(r.courts, 10);
+      const priceVal =
+        r.samePrice || n === 1 ? r.commonPrice : r.prices.filter(Boolean).join(',');
+      return {
+        owner_id: ownerId,
+        sport: sportName,
+        court_name: courtName.trim(),
+        slot_date: formattedDate,
+        start_time: r.startTime,
+        end_time: r.endTime,
+        total_slots: n,
+        price: priceVal,
+        facilities: facilitiesRules.facilities,
+        rules: facilitiesRules.rules,
+      };
+    });
+
+    const { error: dbError } = await supabase.from('slots').insert(inserts);
+    if (dbError) {
+      Alert.alert('Save Failed', `Could not save slot: ${dbError.message}`);
+      return;
+    }
+
+    // Notify parent
     const data: SlotData = {
       sport: sportName,
+      courtName: courtName.trim(),
+      slotDate,
       slots: rows.map((r) => {
         const n = parseInt(r.courts, 10);
-        const unitLabel = isPool ? (n > 1 ? 'Lane' : 'Pool Session') : (n > 1 ? 'Court' : 'Slot');
+        const unitLabel = isPool
+          ? n > 1 ? 'Lane' : 'Pool Session'
+          : n > 1 ? 'Court' : 'Slot';
         const courts = Array.from({ length: n }, (_, i) => ({
           label: n > 1 ? `${unitLabel} ${i + 1}` : unitLabel,
-          price: r.samePrice || n === 1 ? `₹${r.commonPrice}/hr` : `₹${r.prices[i] ?? r.commonPrice}/hr`,
+          price:
+            r.samePrice || n === 1
+              ? `₹${r.commonPrice}/hr`
+              : `₹${r.prices[i] ?? r.commonPrice}/hr`,
         }));
         return { startTime: r.startTime, endTime: r.endTime, courts };
       }),
@@ -811,7 +871,10 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     onSave(data);
     reset();
     onClose();
-  }, [validate, effectiveSport, selectedSport, customSportName, customSports, rows, isPool, facilitiesRules, onSave, onClose, reset]);
+  }, [
+    validate, effectiveSport, selectedSport, customSportName, customSports,
+    courtName, slotDate, rows, isPool, facilitiesRules, onSave, onClose, reset,
+  ]);
 
   const allSportsForDisplay = [
     ...SPORTS_WITH_OTHERS,
@@ -832,7 +895,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Add New Slot</Text>
-              <Text style={styles.subtitle}>Sport · Time · Courts · Pricing</Text>
+              <Text style={styles.subtitle}>Sport · Date · Court · Time · Pricing</Text>
             </View>
             <Pressable onPress={handleClose} hitSlop={12} style={styles.closeBtn}>
               <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
@@ -926,6 +989,53 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                     {selectedSport === OTHERS_KEY ? effectiveSport : (sport?.key ?? selectedSport)} Time Slots
                   </Text>
                   <View style={[styles.sportDot, { backgroundColor: sport?.color ?? '#A78BFA' }]} />
+                </View>
+
+                {/* Court / Lane Name */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Court / Lane Name</Text>
+                  <View style={[styles.othersInputRow, { borderColor: courtName.trim() ? 'rgba(0,255,136,0.35)' : Colors.border }]}>
+                    <MaterialCommunityIcons name="door-open" size={16} color={Colors.textMuted} />
+                    <TextInput
+                      style={[styles.othersInput, { marginLeft: 8 }]}
+                      value={courtName}
+                      onChangeText={setCourtName}
+                      placeholder="e.g. Court 1, Turf A, Swimming Lane 2"
+                      placeholderTextColor={Colors.textMuted}
+                      returnKeyType="done"
+                      maxLength={50}
+                    />
+                  </View>
+                </View>
+
+                {/* Booking Date */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Booking Date</Text>
+                  <View style={[styles.othersInputRow, { borderColor: slotDate.trim() ? 'rgba(0,191,255,0.35)' : Colors.border }]}>
+                    <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
+                    <TextInput
+                      style={[styles.othersInput, { marginLeft: 8, flex: 1 }]}
+                      value={slotDate}
+                      onChangeText={setSlotDate}
+                      placeholder="DD/MM/YYYY"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="numeric"
+                      maxLength={10}
+                      returnKeyType="done"
+                    />
+                    <Pressable
+                      hitSlop={8}
+                      onPress={() => {
+                        const now = new Date();
+                        const dd = String(now.getDate()).padStart(2, '0');
+                        const mm = String(now.getMonth() + 1).padStart(2, '0');
+                        const yyyy = now.getFullYear();
+                        setSlotDate(`${dd}/${mm}/${yyyy}`);
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, color: Colors.neonGreen, fontWeight: '700', paddingRight: 4 }}>Today</Text>
+                    </Pressable>
+                  </View>
                 </View>
 
                 <View style={styles.slotList}>

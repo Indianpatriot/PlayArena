@@ -15,7 +15,7 @@ import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
-import { GlassCard, LogoBadge, LocationPicker, ProfileMenu, AddSlotModal, SlotData } from '@/components';
+import { GlassCard, LogoBadge, LocationPicker, ProfileMenu, AddSlotModal, SlotData, SlotsModal } from '@/components';
 import { useAuth } from '@/hooks/useAuth';
 import { LocationData } from '@/services/location';
 import { PREDEFINED_SPORTS } from '@/constants/sports';
@@ -89,6 +89,7 @@ export default function DashboardScreen() {
   const [loadingVenues, setLoadingVenues] = useState(false);
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   const [addSlotVisible, setAddSlotVisible] = useState(false);
+  const [slotsVisible, setSlotsVisible] = useState(false);
   const [savedSlots, setSavedSlots] = useState<SlotData[]>([]);
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -206,7 +207,10 @@ export default function DashboardScreen() {
           style={{ opacity: contentOpacity, transform: [{ translateY: contentY }] }}
         >
           {isOwner ? (
-            <OwnerDashboard onAddSlot={() => setAddSlotVisible(true)} />
+            <OwnerDashboard
+              onAddSlot={() => setAddSlotVisible(true)}
+              onViewSlots={() => setSlotsVisible(true)}
+            />
           ) : (
             <PlayerDashboard
               selectedSport={selectedSport}
@@ -225,6 +229,12 @@ export default function DashboardScreen() {
         visible={addSlotVisible}
         onClose={() => setAddSlotVisible(false)}
         onSave={handleSlotSave}
+      />
+
+      {/* Slots Modal */}
+      <SlotsModal
+        visible={slotsVisible}
+        onClose={() => setSlotsVisible(false)}
       />
 
       {/* Profile Menu */}
@@ -379,7 +389,7 @@ const VenueCard = React.memo(function VenueCard({ venue }: { venue: Venue }) {
 });
 
 // ── Owner Dashboard ───────────────────────────────────────────────────────────
-function OwnerDashboard({ onAddSlot }: { onAddSlot: () => void }) {
+function OwnerDashboard({ onAddSlot, onViewSlots }: { onAddSlot: () => void; onViewSlots: () => void }) {
   const stats = [
     { label: 'Today Bookings', value: '—', icon: 'calendar-today', color: '#00FF88' },
     { label: "Today's Revenue", value: '—', icon: 'trending-up', color: '#00BFFF' },
@@ -417,7 +427,7 @@ function OwnerDashboard({ onAddSlot }: { onAddSlot: () => void }) {
       <View style={styles.ownerActions}>
         {[
           { icon: 'add-circle-outline', label: 'Add Slot', color: Colors.neonGreen, onPress: onAddSlot },
-          { icon: 'bar-chart', label: 'Analytics', color: Colors.electricBlue, onPress: undefined as any },
+          { icon: 'event-note', label: 'Slots', color: Colors.electricBlue, onPress: onViewSlots },
           { icon: 'people', label: 'Bookings', color: '#FFB800', onPress: undefined as any },
           { icon: 'settings', label: 'Settings', color: Colors.textSecondary, onPress: undefined as any },
         ].map((a) => (
