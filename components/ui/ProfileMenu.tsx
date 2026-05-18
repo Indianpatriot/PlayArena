@@ -1,5 +1,5 @@
 // PlayArena — Profile Menu Bottom Sheet
-import React, { useState, useCallback } from 'react';
+import React, {useState,useCallback,useEffect,} from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
 import { AuthUser } from '@/services/auth';
+import { supabase } from '@/services/supabase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ProfileMenuProps {
@@ -53,17 +54,7 @@ interface Order {
   status: 'confirmed' | 'completed' | 'cancelled';
 }
 
-const MOCK_BOOKINGS: Booking[] = [
-  { id: 'b1', venueName: 'Green Turf Arena', sport: 'Football', date: 'Apr 28, 2025', time: '6:00 PM – 7:00 PM', status: 'completed', amount: '₹800' },
-  { id: 'b2', venueName: 'Cricket Hub', sport: 'Cricket', date: 'Apr 22, 2025', time: '5:00 PM – 7:00 PM', status: 'completed', amount: '₹1,200' },
-  { id: 'b3', venueName: 'Smash Court', sport: 'Badminton', date: 'Apr 15, 2025', time: '7:00 AM – 8:00 AM', status: 'cancelled', amount: '₹400' },
-];
 
-const MOCK_ORDERS: Order[] = [
-  { id: 'o1', customerName: 'Rahul Singh', sport: 'Cricket', date: 'Apr 30, 2025', time: '4:00 PM – 6:00 PM', revenue: '₹1,500', status: 'confirmed' },
-  { id: 'o2', customerName: 'Aman Verma', sport: 'Football', date: 'Apr 28, 2025', time: '6:00 PM – 7:00 PM', revenue: '₹900', status: 'completed' },
-  { id: 'o3', customerName: 'Priya Nair', sport: 'Badminton', date: 'Apr 25, 2025', time: '8:00 AM – 9:00 AM', revenue: '₹500', status: 'completed' },
-];
 
 const OWNER_SPORTS = [
   { key: 'cricket', label: 'Cricket', icon: 'cricket', color: '#FFB800' },
@@ -209,40 +200,206 @@ function PlayerProfileScreen({ user, onBack }: { user: AuthUser | null; onBack: 
 }
 
 // ── Player Bookings Sub-screen ────────────────────────────────────────────────
-function PlayerBookingsScreen({ onBack }: { onBack: () => void }) {
+function PlayerBookingsScreen({
+  onBack,
+  user,
+}: {
+  onBack: () => void;
+  user: AuthUser | null;
+}) {
+  const [bookings, setBookings] =
+    useState<any[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  useEffect(() => {
+    fetchBookings();
+  }, []);
+
+  const fetchBookings =
+    async () => {
+      try {
+        if (!user?.id) return;
+
+        const {
+          data,
+          error,
+        } = await supabase
+          .from('bookings')
+          .select(`
+            *,
+            slots (
+              sport,
+              court_name,
+              slot_date,
+              start_time,
+              end_time,
+              price
+            ),
+            player:profiles!bookings_player_id_fkey (
+              full_name
+            )
+          `)
+          .eq(
+            user.role === 'owner'
+              ? 'owner_id'
+              : 'player_id',
+            user.id
+          )
+          .order(
+            'booking_date',
+            {
+              ascending: false,
+            }
+          );
+
+        if (error)
+          throw error;
+
+        setBookings(
+          data || []
+        );
+      } catch {
+      } finally {
+        setLoading(false);
+      }
+    };
+
   return (
     <View style={styles.subScreen}>
-      <SubScreenHeader title="Previous Bookings" onBack={onBack} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.subContent}>
-        {MOCK_BOOKINGS.length === 0 ? (
-          <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="calendar-blank" size={40} color={Colors.textMuted} />
-            <Text style={styles.emptyTitle}>No bookings yet</Text>
-            <Text style={styles.emptyText}>Your booking history will appear here.</Text>
+      <SubScreenHeader
+        title="Previous Bookings"
+        onBack={onBack}
+      />
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={
+          styles.subContent
+        }
+      >
+        {loading ? (
+          <Text
+            style={{
+              color: 'white',
+            }}
+          >
+            Loading...
+          </Text>
+        ) : bookings.length ===
+          0 ? (
+          <View
+            style={
+              styles.emptyState
+            }
+          >
+            <Text
+              style={
+                styles.emptyTitle
+              }
+            >
+              No bookings yet
+            </Text>
           </View>
         ) : (
-          MOCK_BOOKINGS.map((b) => (
-            <View key={b.id} style={styles.historyCard}>
-              <LinearGradient
-                colors={['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.01)']}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <View style={styles.historyCardRow}>
-                <View style={styles.historyIconWrap}>
-                  <MaterialCommunityIcons name="stadium-variant" size={22} color={Colors.neonGreen} />
-                </View>
-                <View style={styles.historyInfo}>
-                  <Text style={styles.historyVenue}>{b.venueName}</Text>
-                  <Text style={styles.historySport}>{b.sport}</Text>
-                  <Text style={styles.historyDateTime}>{b.date} · {b.time}</Text>
-                </View>
-                <View style={styles.historyRight}>
-                  <Text style={styles.historyAmount}>{b.amount}</Text>
-                  <StatusBadge status={b.status} />
+          bookings.map(
+            (b: any) => (
+              <View
+                key={b.id}
+                style={
+                  styles.historyCard
+                }
+              >
+                <View
+                  style={
+                    styles.historyCardRow
+                  }
+                >
+                  <View
+                    style={
+                      styles.historyInfo
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.historyVenue
+                      }
+                    >
+                      {user?.role ===
+                      'owner'
+                        ? b.player
+                            ?.full_name
+                        : b.slots
+                            ?.court_name}
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.historySport
+                      }
+                    >
+                      {
+                        b.slots
+                          ?.sport
+                      }
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.historyDateTime
+                      }
+                    >
+                      {
+                        b.slots
+                          ?.slot_date
+                      }
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.historyDateTime
+                      }
+                    >
+                      {
+                        b.slots
+                          ?.start_time
+                      }{' '}
+                      -{' '}
+                      {
+                        b.slots
+                          ?.end_time
+                      }
+                    </Text>
+                  </View>
+
+                  <View
+                    style={
+                      styles.historyRight
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.historyAmount
+                      }
+                    >
+                      ₹
+                      {
+                        b.slots
+                          ?.price
+                      }
+                    </Text>
+
+                    <StatusBadge
+                      status={
+                        b.status
+                      }
+                    />
+                  </View>
                 </View>
               </View>
-            </View>
-          ))
+            )
+          )
         )}
       </ScrollView>
     </View>
@@ -312,55 +469,7 @@ function OwnerProfileScreen({ user, onBack }: { user: AuthUser | null; onBack: (
   );
 }
 
-// ── Owner Orders Sub-screen ───────────────────────────────────────────────────
-function OwnerOrdersScreen({ onBack }: { onBack: () => void }) {
-  const totalRevenue = MOCK_ORDERS.filter(o => o.status !== 'cancelled')
-    .reduce((acc) => acc + 1, 0);
-
-  return (
-    <View style={styles.subScreen}>
-      <SubScreenHeader title="Previous Orders" onBack={onBack} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.subContent}>
-        {/* Revenue summary */}
-        <View style={styles.revenueSummary}>
-          <LinearGradient colors={['rgba(0,191,255,0.12)', 'rgba(0,191,255,0.04)']} style={StyleSheet.absoluteFillObject} />
-          <MaterialIcons name="trending-up" size={20} color={Colors.electricBlue} />
-          <View>
-            <Text style={styles.revenueSummaryLabel}>Total Revenue (This Month)</Text>
-            <Text style={styles.revenueSummaryValue}>₹2,900</Text>
-          </View>
-          <View style={styles.revenueCount}>
-            <Text style={styles.revenueCountNum}>{totalRevenue}</Text>
-            <Text style={styles.revenueCountLabel}>orders</Text>
-          </View>
-        </View>
-
-        {MOCK_ORDERS.map((o) => (
-          <View key={o.id} style={styles.historyCard}>
-            <LinearGradient
-              colors={['rgba(255,255,255,0.04)', 'rgba(255,255,255,0.01)']}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <View style={styles.historyCardRow}>
-              <View style={[styles.historyIconWrap, { backgroundColor: 'rgba(0,191,255,0.1)', borderColor: 'rgba(0,191,255,0.2)' }]}>
-                <MaterialIcons name="people" size={20} color={Colors.electricBlue} />
-              </View>
-              <View style={styles.historyInfo}>
-                <Text style={styles.historyVenue}>{o.customerName}</Text>
-                <Text style={styles.historySport}>{o.sport}</Text>
-                <Text style={styles.historyDateTime}>{o.date} · {o.time}</Text>
-              </View>
-              <View style={styles.historyRight}>
-                <Text style={[styles.historyAmount, { color: Colors.electricBlue }]}>{o.revenue}</Text>
-                <StatusBadge status={o.status} />
-              </View>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
-    </View>
-  );
-}
+    
 
 // ── Owner Sports Managed ──────────────────────────────────────────────────────
 function OwnerSportsScreen({ onBack }: { onBack: () => void }) {
@@ -457,10 +566,13 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
     },
     {
       icon: 'receipt-long',
-      label: 'Previous Orders',
-      sub: 'Booking history & revenue',
+      label: 'Previous Bookings',
+      sub: 'Player booking history',
       color: Colors.warning,
-      onPress: () => setSubScreen('ownerOrders'),
+      onPress: () =>
+        setSubScreen(
+          'playerBookings'
+        ),
     },
     {
       icon: 'sports',
@@ -488,21 +600,46 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
           <View style={styles.handle} />
 
           {/* ── Sub-screens ─────────────────────────────────────────────────── */}
-          {subScreen === 'playerProfile' && (
-            <PlayerProfileScreen user={user} onBack={() => setSubScreen(null)} />
-          )}
-          {subScreen === 'playerBookings' && (
-            <PlayerBookingsScreen onBack={() => setSubScreen(null)} />
-          )}
-          {subScreen === 'ownerProfile' && (
-            <OwnerProfileScreen user={user} onBack={() => setSubScreen(null)} />
-          )}
-          {subScreen === 'ownerOrders' && (
-            <OwnerOrdersScreen onBack={() => setSubScreen(null)} />
-          )}
-          {subScreen === 'ownerSports' && (
-            <OwnerSportsScreen onBack={() => setSubScreen(null)} />
-          )}
+          {subScreen !== null ? (
+            <View
+              style={{
+                flex: 1,
+                paddingBottom: insets.bottom + 20,
+              }}
+            >
+              {subScreen === 'playerProfile' && (
+                <PlayerProfileScreen
+                  user={user}
+                  onBack={() => setSubScreen(null)}
+                />
+              )}
+
+              {subScreen ===
+                'playerBookings' && (
+                <PlayerBookingsScreen
+                  user={user}
+                  onBack={() =>
+                    setSubScreen(null)
+                  }
+                />
+              )}
+
+              {subScreen === 'ownerProfile' && (
+                <OwnerProfileScreen
+                  user={user}
+                  onBack={() => setSubScreen(null)}
+                />
+              )}
+
+
+
+              {subScreen === 'ownerSports' && (
+                <OwnerSportsScreen
+                  onBack={() => setSubScreen(null)}
+                />
+              )}
+            </View>
+          ) : null}
 
           {/* ── Main Menu ───────────────────────────────────────────────────── */}
           {subScreen === null ? (
@@ -586,7 +723,8 @@ const styles = StyleSheet_create({
     paddingTop: Spacing.sm,
     borderTopWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    maxHeight: '92%',
+    height: '88%',
+    overflow: 'hidden',
   },
   handle: {
     width: 36,
@@ -704,10 +842,10 @@ const styles = StyleSheet_create({
     color: Colors.error,
   },
   // Sub-screens
-  subScreen: {
-    flex: 1,
-    minHeight: 400,
-  },
+    subScreen: {
+      minHeight: 400,
+      maxHeight: '85%',
+    },
   subHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -721,7 +859,7 @@ const styles = StyleSheet_create({
     justifyContent: 'center',
   },
   subHeaderTitle: {
-    fontSize: Typography.fontSizes.md,
+    fontSize: Typography.fontSizes.lg,
     fontWeight: '800',
     color: Colors.textPrimary,
   },
@@ -848,7 +986,8 @@ const styles = StyleSheet_create({
   },
   historyCardRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+
     gap: Spacing.md,
     padding: Spacing.md,
   },

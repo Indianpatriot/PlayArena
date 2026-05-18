@@ -19,8 +19,10 @@ import { GlassCard, LogoBadge, LocationPicker, ProfileMenu, AddSlotModal, SlotDa
 import { useAuth } from '@/hooks/useAuth';
 import { LocationData } from '@/services/location';
 import { PREDEFINED_SPORTS } from '@/constants/sports';
+import { supabase } from '@/services/supabase';
 
 const { width } = Dimensions.get('window');
+const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed', 'completed'];
 
 // ── Sport category definitions ────────────────────────────────────────────────
 const SPORT_CATEGORIES = [
@@ -35,8 +37,16 @@ interface Venue {
   sport: string;
   rating: number;
   pricePerHour: string;
+  price: number;
   distance: string;
   freeSlots: number;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  city: string;
+  courtName: string;
+  ownerId: string;
+  rules: string[];
 }
 
 // ── Placeholder loading skeleton ──────────────────────────────────────────────
@@ -106,16 +116,71 @@ export default function DashboardScreen() {
     ]).start();
   }, []);
 
-  // Fetch venues when location/sport changes
-  const fetchVenues = useCallback(() => {
-    if (!location) return;
+  // Fetch only player-visible slots. Booked slots stay visible in owner views/history.
+  const fetchVenues = useCallback(async () => {
     setLoadingVenues(true);
-    setVenues([]);
-    // TODO: Replace with real API call
-    setTimeout(() => {
+
+    try {
+      const { data: bookedSlots, error: bookingsError } = await supabase
+        .from('bookings')
+        .select('slot_id')
+        .in('status', ACTIVE_BOOKING_STATUSES);
+
+      if (bookingsError) {
+        throw bookingsError;
+      }
+
+      const bookedSlotIds = (bookedSlots ?? [])
+        .map((booking: any) => booking.slot_id)
+        .filter(Boolean);
+
+      let slotsQuery = supabase
+        .from('slots')
+        .select(`
+          *,
+          owner:profiles!slots_owner_id_fkey (
+            turf_name,
+            location
+          )
+        `);
+
+      if (bookedSlotIds.length > 0) {
+        slotsQuery = slotsQuery.not('id', 'in', `(${bookedSlotIds.join(',')})`);
+      }
+
+      const { data, error } = await slotsQuery;
+
+      if (error) {
+        throw error;
+      }
+
+      const mappedVenues = (data || []).map((slot: any) => ({
+        id: slot.id,
+        ownerId: slot.owner_id,
+        name: slot.owner?.turf_name || 'Sports Arena',
+        city: slot.owner?.location || 'Unknown Location',
+        courtName: slot.court_name,
+        sport: slot.sport,
+        rating: 4.5,
+        price: Number(slot.price || 0),
+        pricePerHour: `₹${slot.price || 0}/hr`,
+        distance: 'Available',
+        freeSlots: slot.total_slots || 0,
+        slotDate: slot.slot_date,
+        startTime: slot.start_time,
+        endTime: slot.end_time,
+        rules: slot.rules || [],
+      }));
+
+      setVenues(mappedVenues);
+    } catch (err) {
+      console.error('Fetch venues error:', err);
+      setVenues([]);
+    } finally {
       setLoadingVenues(false);
-    }, 1200);
-  }, [location, selectedSport]);
+    }
+  }, []);
+
 
   useEffect(() => {
     fetchVenues();
@@ -131,6 +196,30 @@ export default function DashboardScreen() {
   }, [logout, router]);
 
   const isOwner = user?.role === 'owner';
+  const handleBookSlot = async (venue: Venue) => {
+    router.push({
+      pathname: '/checkout' as any,
+      params: {
+        slot: JSON.stringify(venue),
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (isOwner) return;
+
+    const channelName = `player-slot-availability-${user?.id ?? 'guest'}-${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        fetchVenues();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchVenues, isOwner, user?.id]);
 
   return (
     <View style={styles.container}>
@@ -219,6 +308,7 @@ export default function DashboardScreen() {
               loadingVenues={loadingVenues}
               locationSelected={!!location}
               onRetry={fetchVenues}
+              onBookSlot={handleBookSlot}
             />
           )}
         </Animated.View>
@@ -245,6 +335,7 @@ export default function DashboardScreen() {
         onLogout={handleLogout}
       />
     </View>
+    
   );
 }
 
@@ -256,6 +347,8 @@ interface PlayerDashboardProps {
   loadingVenues: boolean;
   locationSelected: boolean;
   onRetry: () => void;
+  onBookSlot: (venue: Venue) => void;
+
 }
 
 function PlayerDashboard({
@@ -265,6 +358,7 @@ function PlayerDashboard({
   loadingVenues,
   locationSelected,
   onRetry,
+  onBookSlot,
 }: PlayerDashboardProps) {
   return (
     <View>
@@ -322,7 +416,7 @@ function PlayerDashboard({
           ) : null}
         </View>
 
-        {!locationSelected ? (
+        {false ? (
           <GlassCard variant="neon" padding={20}>
             <View style={styles.locationPrompt}>
               <MaterialIcons name="location-on" size={32} color={Colors.neonGreen} />
@@ -339,51 +433,131 @@ function PlayerDashboard({
             <VenueSkeleton />
           </View>
         ) : venues.length === 0 ? (
-          <EmptyVenuesState onRetry={onRetry} />
-        ) : (
-          venues.map((venue) => <VenueCard key={venue.id} venue={venue} />)
-        )}
+  <EmptyVenuesState onRetry={onRetry} />
+) : (
+  <>
+    <Text style={{ color: 'white', marginBottom: 10 }}>
+      Venues count: {venues.length}
+    </Text>
+
+    {venues.map((venue) => (
+    <VenueCard
+      key={venue.id}
+      venue={venue}
+      onBook={() =>
+        onBookSlot(venue)
+      }
+    />
+))}
+  </>
+)}
       </View>
     </View>
   );
 }
 
 // ── Venue Card ────────────────────────────────────────────────────────────────
-const VenueCard = React.memo(function VenueCard({ venue }: { venue: Venue }) {
+const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Venue;  onBook: () => void }) {
   return (
     <Pressable style={styles.venueCard}>
       <LinearGradient
         colors={['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.02)']}
         style={StyleSheet.absoluteFillObject}
       />
-      <View style={styles.venueCardInner}>
-        <View style={styles.venueIconWrap}>
-          <MaterialCommunityIcons name="stadium-variant" size={28} color={Colors.neonGreen} />
-        </View>
-        <View style={styles.venueInfo}>
-          <Text style={styles.venueName}>{venue.name}</Text>
-          <Text style={styles.venueSport}>
-            {venue.sport} · {venue.distance}
-          </Text>
-          <View style={styles.venueBottom}>
-            <View style={styles.ratingChip}>
-              <MaterialIcons name="star" size={10} color="#FFB800" />
-              <Text style={styles.ratingText}>{venue.rating}</Text>
-            </View>
-            <View style={styles.slotsChip}>
-              <Text style={styles.slotsText}>{venue.freeSlots} slots free</Text>
-            </View>
-          </View>
-        </View>
-        <View style={styles.venuePrice}>
-          <Text style={styles.priceText}>{venue.pricePerHour}</Text>
-          <Pressable style={styles.bookBtn}>
-            <LinearGradient colors={['#00FF88', '#00CC6A']} style={styles.bookBtnGradient}>
-              <Text style={styles.bookBtnText}>Book</Text>
-            </LinearGradient>
-          </Pressable>
-        </View>
-      </View>
+<View style={{ flex: 1, marginLeft: 12 }}>
+  {/* Top section */}
+    <Text style={styles.venueName}>
+      {venue.name}
+    </Text>
+
+    <Text
+      style={{
+        color: Colors.textMuted,
+        fontSize: 13,
+        marginBottom: 6,
+      }}
+    >
+      📍 {venue.city}
+    </Text>
+
+    <Text
+      style={{
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 16,
+      }}
+    >
+      {venue.courtName}
+    </Text>
+
+  <Text style={styles.venueSport}>
+    {venue.sport}
+  </Text>
+
+  <Text
+    style={{
+      color: Colors.textMuted,
+      fontSize: 12,
+      marginTop: 4,
+    }}
+  >
+    📅 {venue.slotDate}
+  </Text>
+
+  <Text
+    style={{
+      color: Colors.textMuted,
+      fontSize: 12,
+    }}
+  >
+    🕒 {venue.startTime} - {venue.endTime}
+  </Text>
+
+  {/* Bottom row */}
+  <View
+    style={{
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 16,
+    }}
+  >
+    <View>
+      <Text
+        style={{
+          color: '#fff',
+          fontWeight: '800',
+          fontSize: 22,
+        }}
+      >
+        {venue.pricePerHour}
+      </Text>
+
+      <Text
+        style={{
+          color: Colors.neonGreen,
+          fontSize: 13,
+        }}
+      >
+        {venue.freeSlots} slots free
+      </Text>
+    </View>
+
+    <Pressable
+      style={styles.bookBtn}
+      onPress={onBook}
+    >
+      <LinearGradient
+        colors={['#00FF88', '#00CC6A']}
+        style={styles.bookBtnGradient}
+      >
+        <Text style={styles.bookBtnText}>
+          Book Now
+        </Text>
+      </LinearGradient>
+    </Pressable>
+  </View>
+</View>
     </Pressable>
   );
 });
@@ -636,23 +810,29 @@ const styles = StyleSheet.create({
   },
   priceText: {
     fontSize: Typography.fontSizes.sm,
-    fontWeight: '800',
-    color: Colors.textPrimary,
+    fontWeight: '700',
+    color: Colors.neonGreen,
   },
   bookBtn: {
-    borderRadius: Radius.full,
+    borderRadius: 24,
     overflow: 'hidden',
+    minWidth: 100,
   },
+
   bookBtnGradient: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    minHeight: 44,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 24,
   },
+
   bookBtnText: {
-    color: '#080C10',
-    fontSize: Typography.fontSizes.xs,
+    color: '#000',
+    fontSize: 16,
     fontWeight: '800',
+    lineHeight: 20,
   },
   // Skeleton
   skeletonList: {

@@ -156,12 +156,33 @@ export const AuthService = {
 
       throw new Error(msg || 'Signup failed. Please try again.');
     }
-
     if (!authData.user) {
       throw new Error('Signup failed. Please try again.');
     }
 
-    // Email confirmation disabled → session returned immediately, user is logged in
+    // Insert into profiles table
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert({
+        id: authData.user.id,
+        full_name: data.name,
+        email: data.email,
+        role: data.role,
+        turf_name:
+          data.role === 'owner'
+            ? data.turfName
+            : null,
+        location:
+          data.role === 'owner'
+            ? data.location
+            : null,
+      })
+
+    if (profileError) {
+      throw new Error(profileError.message);
+    }
+
+    // Email confirmation disabled → session returned immediately
     if (authData.session) {
       return mapSupabaseUser(authData.user, data.role);
     }

@@ -18,7 +18,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     // Protected screens: anything not in the auth flow
     const authScreens = ['index', 'player-login', 'owner-login', 'signup', 'forgot-password'];
-    const currentSegment = segments[0] ?? '';
+    const currentSegment = String(segments[0] ?? '');
     const isAuthScreen = authScreens.includes(currentSegment);
 
     if (!isAuthenticated && !isAuthScreen) {
@@ -54,6 +54,7 @@ export default function RootLayout() {
               <Stack.Screen name="signup" options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="dashboard" options={{ animation: 'fade' }} />
+              <Stack.Screen name="checkout" options={{ animation: 'slide_from_right' }} />
             </Stack>
           </AuthGate>
         </AuthProvider>

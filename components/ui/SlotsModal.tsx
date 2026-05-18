@@ -558,8 +558,14 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
     if (!user?.id) return;
     setLoading(true);
     const { data, error } = await supabase
-      .from('slots')
-      .select('*')
+        .from('slots')
+        .select(`
+          *,
+          profiles!slots_owner_id_fkey (
+            turf_name,
+            location
+          )
+        `)
       .eq('owner_id', user.id)
       .order('slot_date', { ascending: true });
     setLoading(false);
