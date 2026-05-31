@@ -404,6 +404,9 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
   },
   content: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.md,
     gap: Spacing.md,
   },

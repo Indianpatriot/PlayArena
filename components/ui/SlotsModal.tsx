@@ -1,5 +1,5 @@
 // PlayArena — Slots Modal (Ground Owner: view, edit, delete)
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,9 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +32,7 @@ interface Slot {
   price: string;
   facilities: string[] | null;
   rules: string[] | null;
+  bookings?: { status: string | null }[] | null;
 }
 
 interface SlotsModalProps {
@@ -44,6 +47,47 @@ function formatDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+function dateToIso(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isoToDate(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d);
+}
+
+function isValidIsoDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+}
+
+function timeToMinutes(t: string): number {
+  const parts = t.trim().toUpperCase().split(' ');
+  if (parts.length < 2) return 0;
+  const [timePart, period] = parts;
+  const [hStr, mStr] = timePart.split(':');
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  if (isNaN(h) || isNaN(m)) return 0;
+  if (period === 'PM' && h !== 12) h += 12;
+  if (period === 'AM' && h === 12) h = 0;
+  return h * 60 + m;
+}
+
+function isExpiredSlot(slot: Slot, now = Date.now()): boolean {
+  const [y, m, d] = slot.slot_date.split('-').map(Number);
+  if (!y || !m || !d) return false;
+  const endMinutes = timeToMinutes(slot.end_time);
+  const endAt = new Date(y, m - 1, d, Math.floor(endMinutes / 60), endMinutes % 60);
+  return endAt.getTime() < now;
+}
+
 // ── Edit Sheet (sub-component) ────────────────────────────────────────────────
 interface EditSheetProps {
   slot: Slot;
@@ -53,9 +97,10 @@ interface EditSheetProps {
 
 function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
   const [courtName, setCourtName] = useState(slot.court_name);
-  const [slotDate, setSlotDate] = useState(formatDate(slot.slot_date));
+  const [slotDate, setSlotDate] = useState(slot.slot_date);
   const [price, setPrice] = useState(slot.price);
   const [saving, setSaving] = useState(false);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
 
   const handleSave = async () => {
     if (!courtName.trim()) {
@@ -66,18 +111,15 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
       Alert.alert('Validation', 'Date is required.');
       return;
     }
-    const parts = slotDate.split('/');
-    if (parts.length !== 3 || parts.some((p) => isNaN(Number(p)))) {
-      Alert.alert('Validation', 'Date format must be DD/MM/YYYY.');
+    if (!isValidIsoDate(slotDate)) {
+      Alert.alert('Validation', 'Please select a valid date.');
       return;
     }
-    const [d, m, y] = parts;
-    const iso = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
 
     setSaving(true);
     const { data, error } = await supabase
       .from('slots')
-      .update({ court_name: courtName.trim(), slot_date: iso, price: price.trim() })
+      .update({ court_name: courtName.trim(), slot_date: slotDate, price: price.trim() })
       .eq('id', slot.id)
       .select()
       .single();
@@ -111,19 +153,27 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
         />
       </View>
 
-      <Text style={es.label}>Booking Date (DD/MM/YYYY)</Text>
+      <Text style={es.label}>Booking Date</Text>
       <View style={es.inputRow}>
         <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
-        <TextInput
-          style={es.input}
-          value={slotDate}
-          onChangeText={setSlotDate}
-          placeholder="DD/MM/YYYY"
-          placeholderTextColor={Colors.textMuted}
-          keyboardType="numeric"
-          maxLength={10}
-        />
+        <Pressable style={[es.input, { justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
+          <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
+            {slotDate || 'YYYY-MM-DD'}
+          </Text>
+        </Pressable>
       </View>
+      {datePickerVisible && (
+        <DateTimePicker
+          value={slotDate ? isoToDate(slotDate) : new Date()}
+          mode="date"
+          display="default"
+          minimumDate={new Date()}
+          onChange={(_, selectedDate) => {
+            if (Platform.OS !== 'ios') setDatePickerVisible(false);
+            if (selectedDate) setSlotDate(dateToIso(selectedDate));
+          }}
+        />
+      )}
 
       <Text style={es.label}>Price</Text>
       <View style={es.inputRow}>
@@ -258,6 +308,7 @@ interface SlotCardProps {
 function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel }: SlotCardProps) {
   const facilities = slot.facilities ?? [];
   const rules = slot.rules ?? [];
+  const bookingStatus = slot.bookings?.[0]?.status;
 
   return (
     <View style={sc.card}>
@@ -310,6 +361,12 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
             <Text style={sc.facilitiesText}>{facilities.length} facilit{facilities.length > 1 ? 'ies' : 'y'}</Text>
           </View>
         )}
+        {bookingStatus ? (
+          <View style={sc.statusChip}>
+            <MaterialIcons name="event-available" size={12} color="#FFB800" />
+            <Text style={sc.statusText}>{bookingStatus}</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Facilities & Rules */}
@@ -478,6 +535,23 @@ const sc = StyleSheet.create({
     color: '#A78BFA',
     fontWeight: '600',
   },
+  statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,184,0,0.1)',
+    borderRadius: Radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,0,0.22)',
+  },
+  statusText: {
+    fontSize: Typography.fontSizes.xs,
+    color: '#FFB800',
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
   tagsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -550,9 +624,19 @@ const sc = StyleSheet.create({
 export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [slots, setSlots] = useState<Slot[]>([]);
+  const [allSlots, setAllSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'active' | 'previous'>('active');
+  const [nowTick, setNowTick] = useState(Date.now());
+
+  const slots = useMemo(() => {
+    const filtered = allSlots.filter((slot) => viewMode === 'active' ? !isExpiredSlot(slot, nowTick) : isExpiredSlot(slot, nowTick));
+    return filtered.sort((a, b) => {
+      const diff = isoToDate(a.slot_date).getTime() - isoToDate(b.slot_date).getTime();
+      return viewMode === 'active' ? diff : -diff;
+    });
+  }, [allSlots, viewMode, nowTick]);
 
   const fetchSlots = useCallback(async () => {
     if (!user?.id) return;
@@ -561,6 +645,9 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
         .from('slots')
         .select(`
           *,
+          bookings (
+            status
+          ),
           profiles!slots_owner_id_fkey (
             turf_name,
             location
@@ -573,15 +660,22 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
       Alert.alert('Error', `Could not load slots: ${error.message}`);
       return;
     }
-    setSlots((data ?? []) as Slot[]);
+    setAllSlots((data ?? []) as Slot[]);
   }, [user?.id]);
 
   useEffect(() => {
     if (visible) {
       setEditingId(null);
+      setViewMode('active');
       fetchSlots();
     }
   }, [visible, fetchSlots]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const id = setInterval(() => setNowTick(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, [visible]);
 
   const handleDelete = useCallback((id: string) => {
     Alert.alert('Delete Slot', 'This slot will be permanently removed. Continue?', [
@@ -594,7 +688,7 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
           if (error) {
             Alert.alert('Delete Failed', error.message);
           } else {
-            setSlots((prev) => prev.filter((s) => s.id !== id));
+            setAllSlots((prev) => prev.filter((s) => s.id !== id));
           }
         },
       },
@@ -602,7 +696,7 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
   }, []);
 
   const handleEditSaved = useCallback((updated: Slot) => {
-    setSlots((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    setAllSlots((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
     setEditingId(null);
   }, []);
 
@@ -619,7 +713,7 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
             <View>
               <Text style={styles.title}>My Slots</Text>
               <Text style={styles.subtitle}>
-                {slots.length > 0 ? `${slots.length} slot${slots.length > 1 ? 's' : ''} found` : 'All saved slots'}
+                {slots.length > 0 ? `${slots.length} ${viewMode} slot${slots.length > 1 ? 's' : ''}` : viewMode === 'active' ? 'Upcoming active slots' : 'Expired slots'}
               </Text>
             </View>
             <View style={styles.headerRight}>
@@ -630,6 +724,21 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
                 <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
               </Pressable>
             </View>
+          </View>
+
+          <View style={styles.modeTabs}>
+            <Pressable
+              style={[styles.modeTab, viewMode === 'active' && styles.modeTabActive]}
+              onPress={() => setViewMode('active')}
+            >
+              <Text style={[styles.modeTabText, viewMode === 'active' && styles.modeTabTextActive]}>Active Slots</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeTab, viewMode === 'previous' && styles.modeTabActive]}
+              onPress={() => setViewMode('previous')}
+            >
+              <Text style={[styles.modeTabText, viewMode === 'previous' && styles.modeTabTextActive]}>Previous Slots</Text>
+            </Pressable>
           </View>
 
           {/* Content */}
@@ -650,7 +759,9 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
                 <MaterialCommunityIcons name="calendar-blank" size={52} color={Colors.textMuted} />
                 <Text style={styles.emptyTitle}>No slots yet</Text>
                 <Text style={styles.emptySub}>
-                  Add your first slot using the "Add Slot" button on the dashboard.
+                  {viewMode === 'active'
+                    ? 'Add your first slot using the "Add Slot" button on the dashboard.'
+                    : 'Expired slots will appear here automatically.'}
                 </Text>
               </View>
             ) : (
@@ -680,6 +791,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.65)',
   },
   sheet: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
     backgroundColor: '#0E1620',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -737,6 +851,34 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  modeTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+  },
+  modeTab: {
+    flex: 1,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  modeTabActive: {
+    borderColor: 'rgba(0,191,255,0.35)',
+    backgroundColor: 'rgba(0,191,255,0.12)',
+  },
+  modeTabText: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.textMuted,
+    fontWeight: '700',
+  },
+  modeTabTextActive: {
+    color: Colors.electricBlue,
   },
   scrollContent: {
     paddingHorizontal: Spacing.lg,

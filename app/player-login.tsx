@@ -267,6 +267,9 @@ const styles = StyleSheet.create({
     transform: [{ scaleX: 1.2 }],
   },
   scrollContent: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.lg,
     gap: Spacing.lg,
   },

@@ -7,8 +7,8 @@ import {
   Animated,
   ScrollView,
   Pressable,
-  Dimensions,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -21,7 +21,6 @@ import { LocationData } from '@/services/location';
 import { PREDEFINED_SPORTS } from '@/constants/sports';
 import { supabase } from '@/services/supabase';
 
-const { width } = Dimensions.get('window');
 const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed', 'completed'];
 
 // ── Sport category definitions ────────────────────────────────────────────────
@@ -100,6 +99,7 @@ export default function DashboardScreen() {
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   const [addSlotVisible, setAddSlotVisible] = useState(false);
   const [slotsVisible, setSlotsVisible] = useState(false);
+  const [bookingsVisible, setBookingsVisible] = useState(false);
   const [savedSlots, setSavedSlots] = useState<SlotData[]>([]);
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -299,6 +299,7 @@ export default function DashboardScreen() {
             <OwnerDashboard
               onAddSlot={() => setAddSlotVisible(true)}
               onViewSlots={() => setSlotsVisible(true)}
+              onViewBookings={() => setBookingsVisible(true)}
             />
           ) : (
             <PlayerDashboard
@@ -325,6 +326,12 @@ export default function DashboardScreen() {
       <SlotsModal
         visible={slotsVisible}
         onClose={() => setSlotsVisible(false)}
+      />
+
+      <OwnerBookingsModal
+        visible={bookingsVisible}
+        onClose={() => setBookingsVisible(false)}
+        ownerId={user?.id}
       />
 
       {/* Profile Menu */}
@@ -563,7 +570,90 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
 });
 
 // ── Owner Dashboard ───────────────────────────────────────────────────────────
-function OwnerDashboard({ onAddSlot, onViewSlots }: { onAddSlot: () => void; onViewSlots: () => void }) {
+function OwnerBookingsModal({ visible, onClose, ownerId }: { visible: boolean; onClose: () => void; ownerId?: string }) {
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchBookings = useCallback(async () => {
+    if (!ownerId) return;
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('bookings')
+      .select(`
+        *,
+        slots (
+          sport,
+          court_name,
+          slot_date,
+          start_time,
+          end_time,
+          price
+        ),
+        player:profiles!bookings_player_id_fkey (
+          full_name
+        )
+      `)
+      .eq('owner_id', ownerId)
+      .order('booking_date', { ascending: false });
+    setLoading(false);
+
+    setBookings(error ? [] : data ?? []);
+  }, [ownerId]);
+
+  useEffect(() => {
+    if (visible) fetchBookings();
+  }, [visible, fetchBookings]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.ownerBookingsOverlay}>
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <View style={styles.ownerBookingsSheet}>
+          <View style={styles.ownerBookingsHeader}>
+            <View>
+              <Text style={styles.ownerBookingsTitle}>Bookings</Text>
+              <Text style={styles.ownerBookingsSubtitle}>{bookings.length} booking{bookings.length === 1 ? '' : 's'}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.ownerBookingsClose} hitSlop={12}>
+              <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.ownerBookingsContent} showsVerticalScrollIndicator={false}>
+            {loading ? (
+              <View style={styles.ownerBookingsEmpty}>
+                <ActivityIndicator color={Colors.neonGreen} />
+                <Text style={styles.ownerBookingsEmptyText}>Loading bookings...</Text>
+              </View>
+            ) : bookings.length === 0 ? (
+              <View style={styles.ownerBookingsEmpty}>
+                <MaterialIcons name="event-busy" size={42} color={Colors.textMuted} />
+                <Text style={styles.ownerBookingsEmptyText}>No bookings yet</Text>
+              </View>
+            ) : (
+              bookings.map((booking) => (
+                <View key={booking.id} style={styles.ownerBookingCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.ownerBookingPlayer}>{booking.player?.full_name ?? 'Player'}</Text>
+                    <Text style={styles.ownerBookingSport}>{booking.slots?.sport ?? 'Sport'}</Text>
+                    <Text style={styles.ownerBookingMeta}>{booking.slots?.court_name ?? 'Court'} - {booking.slots?.slot_date}</Text>
+                    <Text style={styles.ownerBookingMeta}>{booking.slots?.start_time} - {booking.slots?.end_time}</Text>
+                  </View>
+                  <View style={styles.ownerBookingRight}>
+                    <Text style={styles.ownerBookingPrice}>Rs {booking.slots?.price ?? '--'}</Text>
+                    <Text style={styles.ownerBookingStatus}>{booking.status ?? 'booked'}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OwnerDashboard({ onAddSlot, onViewSlots, onViewBookings }: { onAddSlot: () => void; onViewSlots: () => void; onViewBookings: () => void }) {
   const stats = [
     { label: 'Today Bookings', value: '—', icon: 'calendar-today', color: '#00FF88' },
     { label: "Today's Revenue", value: '—', icon: 'trending-up', color: '#00BFFF' },
@@ -602,7 +692,7 @@ function OwnerDashboard({ onAddSlot, onViewSlots }: { onAddSlot: () => void; onV
         {[
           { icon: 'add-circle-outline', label: 'Add Slot', color: Colors.neonGreen, onPress: onAddSlot },
           { icon: 'event-note', label: 'Slots', color: Colors.electricBlue, onPress: onViewSlots },
-          { icon: 'people', label: 'Bookings', color: '#FFB800', onPress: undefined as any },
+          { icon: 'people', label: 'Bookings', color: '#FFB800', onPress: onViewBookings },
           { icon: 'settings', label: 'Settings', color: Colors.textSecondary, onPress: undefined as any },
         ].map((a) => (
           <Pressable key={a.label} style={styles.ownerActionBtn} onPress={a.onPress}>
@@ -626,6 +716,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgPrimary,
   },
   header: {
+    width: '100%',
+    maxWidth: 980,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.lg,
     gap: Spacing.md,
@@ -695,9 +788,13 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    alignItems: 'center',
   },
   // Sections
   section: {
+    width: '100%',
+    maxWidth: 980,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.lg,
     marginTop: Spacing.lg,
     gap: Spacing.md,
@@ -929,7 +1026,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   statCard: {
-    width: (width - Spacing.lg * 2 - 12) / 2,
+    flex: 1,
+    minWidth: 150,
     borderRadius: Radius.xl,
     borderWidth: 1,
     backgroundColor: Colors.bgCard,
@@ -978,5 +1076,103 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSizes.xs,
     color: Colors.textSecondary,
     fontWeight: '600',
+  },
+  ownerBookingsOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.65)',
+  },
+  ownerBookingsSheet: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+    maxHeight: '82%',
+    backgroundColor: '#0E1620',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingBottom: Spacing.lg,
+  },
+  ownerBookingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  ownerBookingsTitle: {
+    fontSize: Typography.fontSizes.md,
+    fontWeight: '900',
+    color: Colors.textPrimary,
+  },
+  ownerBookingsSubtitle: {
+    marginTop: 2,
+    fontSize: Typography.fontSizes.sm,
+    color: Colors.textMuted,
+  },
+  ownerBookingsClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  ownerBookingsContent: {
+    padding: Spacing.lg,
+    gap: Spacing.md,
+  },
+  ownerBookingsEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.xxl,
+    gap: Spacing.sm,
+  },
+  ownerBookingsEmptyText: {
+    color: Colors.textMuted,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '600',
+  },
+  ownerBookingCard: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bgCard,
+  },
+  ownerBookingPlayer: {
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '800',
+  },
+  ownerBookingSport: {
+    color: Colors.neonGreen,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  ownerBookingMeta: {
+    color: Colors.textMuted,
+    fontSize: Typography.fontSizes.xs,
+    marginTop: 4,
+  },
+  ownerBookingRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  ownerBookingPrice: {
+    color: Colors.neonGreen,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '900',
+  },
+  ownerBookingStatus: {
+    color: '#FFB800',
+    fontSize: Typography.fontSizes.xs,
+    fontWeight: '800',
+    textTransform: 'capitalize',
   },
 });

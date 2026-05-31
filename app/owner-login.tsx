@@ -291,6 +291,9 @@ const styles = StyleSheet.create({
     marginHorizontal: 0,
   },
   scrollContent: {
+    width: '100%',
+    maxWidth: 620,
+    alignSelf: 'center',
     paddingHorizontal: Spacing.lg,
     gap: Spacing.lg,
   },

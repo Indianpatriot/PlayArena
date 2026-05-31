@@ -716,6 +716,9 @@ const styles = StyleSheet_create({
     backgroundColor: 'rgba(0,0,0,0.7)',
   },
   sheet: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
     backgroundColor: '#0E1620',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,

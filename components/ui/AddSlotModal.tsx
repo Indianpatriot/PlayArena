@@ -10,7 +10,9 @@ import {
   TextInput,
   Alert,
   FlatList,
+  Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -97,6 +99,26 @@ function parseManualTime(raw: string): string | null {
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 9);
+}
+
+function dateToIso(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isoToDate(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d);
+}
+
+function isValidIsoDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
 function makeRow(): TimeSlotRow {
@@ -230,6 +252,9 @@ const tp = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     backgroundColor: '#0E1620',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -718,6 +743,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
   const [customSportError, setCustomSportError] = useState('');
   const [courtName, setCourtName] = useState('');
   const [slotDate, setSlotDate] = useState('');
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
 
   React.useEffect(() => {
     if (visible) loadCustomSports().then(setCustomSports).catch(() => {});
@@ -731,6 +757,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     setCustomSportError('');
     setCourtName('');
     setSlotDate('');
+    setDatePickerVisible(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -760,14 +787,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     if (selectedSport === OTHERS_KEY && !customSportName.trim()) return 'Please enter a custom sport name.';
     if (!courtName.trim()) return 'Please enter a court / lane name.';
     if (!slotDate.trim()) return 'Please enter a booking date.';
-    const dateParts = slotDate.split('/');
-    if (dateParts.length !== 3 || dateParts.some((p) => isNaN(Number(p)))) {
-      return 'Date format must be DD/MM/YYYY (e.g. 25/06/2025).';
-    }
-    const [d, m, y] = dateParts.map(Number);
-    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 2024) {
-      return 'Please enter a valid date in DD/MM/YYYY format.';
-    }
+    if (!isValidIsoDate(slotDate)) return 'Please select a valid booking date.';
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (!r.startTime) return `Slot ${i + 1}: Select a start time.`;
@@ -813,10 +833,6 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
       if (updated) setCustomSports(updated);
     }
 
-    // Convert DD/MM/YYYY → YYYY-MM-DD for Supabase
-    const [day, month, year] = slotDate.split('/');
-    const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-
     // Get current user id
     const { data: userData } = await supabase.auth.getUser();
     const ownerId = userData?.user?.id;
@@ -830,7 +846,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
         owner_id: ownerId,
         sport: sportName,
         court_name: courtName.trim(),
-        slot_date: formattedDate,
+        slot_date: slotDate,
         start_time: r.startTime,
         end_time: r.endTime,
         total_slots: n,
@@ -1013,29 +1029,30 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                   <Text style={styles.sectionTitle}>Booking Date</Text>
                   <View style={[styles.othersInputRow, { borderColor: slotDate.trim() ? 'rgba(0,191,255,0.35)' : Colors.border }]}>
                     <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
-                    <TextInput
-                      style={[styles.othersInput, { marginLeft: 8, flex: 1 }]}
-                      value={slotDate}
-                      onChangeText={setSlotDate}
-                      placeholder="DD/MM/YYYY"
-                      placeholderTextColor={Colors.textMuted}
-                      keyboardType="numeric"
-                      maxLength={10}
-                      returnKeyType="done"
-                    />
+                    <Pressable style={[styles.othersInput, { marginLeft: 8, flex: 1, justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
+                      <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
+                        {slotDate || 'YYYY-MM-DD'}
+                      </Text>
+                    </Pressable>
                     <Pressable
                       hitSlop={8}
-                      onPress={() => {
-                        const now = new Date();
-                        const dd = String(now.getDate()).padStart(2, '0');
-                        const mm = String(now.getMonth() + 1).padStart(2, '0');
-                        const yyyy = now.getFullYear();
-                        setSlotDate(`${dd}/${mm}/${yyyy}`);
-                      }}
+                      onPress={() => setSlotDate(dateToIso(new Date()))}
                     >
                       <Text style={{ fontSize: 11, color: Colors.neonGreen, fontWeight: '700', paddingRight: 4 }}>Today</Text>
                     </Pressable>
                   </View>
+                  {datePickerVisible && (
+                    <DateTimePicker
+                      value={slotDate ? isoToDate(slotDate) : new Date()}
+                      mode="date"
+                      display="default"
+                      minimumDate={new Date()}
+                      onChange={(_, selectedDate) => {
+                        if (Platform.OS !== 'ios') setDatePickerVisible(false);
+                        if (selectedDate) setSlotDate(dateToIso(selectedDate));
+                      }}
+                    />
+                  )}
                 </View>
 
                 <View style={styles.slotList}>

@@ -12,14 +12,25 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // During Expo static rendering (SSR), `window` is undefined in Node.js.
 // Use AsyncStorage only when running in a real runtime (native or browser).
 const isSSR = typeof window === 'undefined';
+const webStorage = {
+  getItem: (key: string) => Promise.resolve(window.localStorage.getItem(key)),
+  setItem: (key: string, value: string) => {
+    window.localStorage.setItem(key, value);
+    return Promise.resolve();
+  },
+  removeItem: (key: string) => {
+    window.localStorage.removeItem(key);
+    return Promise.resolve();
+  },
+};
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     // Native → AsyncStorage, Web browser → AsyncStorage (works fine),
     // SSR/Node.js render → undefined (Supabase uses in-memory, session not needed)
-    storage: isSSR ? undefined : AsyncStorage,
+    storage: isSSR ? undefined : Platform.OS === 'web' ? webStorage : AsyncStorage,
     autoRefreshToken: !isSSR,
     persistSession: !isSSR,
-    detectSessionInUrl: false,
+    detectSessionInUrl: Platform.OS === 'web',
   },
 });
