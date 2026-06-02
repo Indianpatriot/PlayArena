@@ -1,6 +1,6 @@
-# Welcome to OnSpace AI
+# PlayArena
 
-Onspace AI empowers anyone to turn ideas into powerful AI applications in minutes—no coding required. Our free, no-code platform enables effortless creation of custom AI apps; simply describe your vision and our agentic AI handles the rest. The onspace-app, built with React Native and Expo, demonstrates this capability—integrating popular third-party libraries to deliver seamless cross-platform performance across iOS, Android, and Web environments.
+PlayArena is a React Native and Expo app for booking sports venues, managing owner slots, and tracking bookings across mobile and web/PWA.
 
 ## Getting Started
 

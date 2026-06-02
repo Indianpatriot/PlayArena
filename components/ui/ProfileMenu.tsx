@@ -63,6 +63,19 @@ const OWNER_SPORTS = [
   { key: 'volleyball', label: 'Volleyball', icon: 'volleyball', color: '#00BFFF' },
 ];
 
+function slotEndDate(slot?: { slot_date?: string; end_time?: string } | null) {
+  if (!slot?.slot_date || !slot?.end_time) return new Date(NaN);
+  const match = slot.end_time.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const [y, m, d] = slot.slot_date.split('-').map(Number);
+  if (!match || !y || !m || !d) return new Date(NaN);
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && hours !== 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return new Date(y, m - 1, d, hours, minutes);
+}
+
 // ── Avatar circle ─────────────────────────────────────────────────────────────
 function AvatarCircle({ name, role, size = 64 }: { name: string; role: string; size?: number }) {
   const isOwner = role === 'owner';
@@ -207,199 +220,166 @@ function PlayerBookingsScreen({
   onBack: () => void;
   user: AuthUser | null;
 }) {
-  const [bookings, setBookings] =
-    useState<any[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
+  const [allBookings, setAllBookings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tabIndex, setTabIndex] = useState(0);
 
   useEffect(() => {
     fetchBookings();
   }, []);
 
-  const fetchBookings =
-    async () => {
-      try {
-        if (!user?.id) return;
+  const fetchBookings = async () => {
+    try {
+      if (!user?.id) return;
 
-        const {
-          data,
-          error,
-        } = await supabase
-          .from('bookings')
-          .select(`
-            *,
-            slots (
-              sport,
-              court_name,
-              slot_date,
-              start_time,
-              end_time,
-              price
-            ),
-            player:profiles!bookings_player_id_fkey (
-              full_name
-            )
-          `)
-          .eq(
-            user.role === 'owner'
-              ? 'owner_id'
-              : 'player_id',
-            user.id
+      const {
+        data,
+        error,
+      } = await supabase
+        .from('bookings')
+        .select(`
+          *,
+          slots (
+            sport,
+            court_name,
+            slot_date,
+            start_time,
+            end_time,
+            price
+          ),
+          player:profiles!bookings_player_id_fkey (
+            full_name
           )
-          .order(
-            'booking_date',
-            {
-              ascending: false,
-            }
-          );
-
-        if (error)
-          throw error;
-
-        setBookings(
-          data || []
+        `)
+        .eq(
+          user.role === 'owner'
+            ? 'owner_id'
+            : 'player_id',
+          user.id
+        )
+        .order(
+          'booking_date',
+          {
+            ascending: false,
+          }
         );
-      } catch {
-      } finally {
-        setLoading(false);
-      }
-    };
+
+      if (error)
+        throw error;
+
+      setAllBookings(data || []);
+    } catch {
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const now = new Date();
+  const upcomingBookings = allBookings.filter(
+    (booking: any) =>
+      booking.slots &&
+      slotEndDate(booking.slots) > now &&
+      booking.status !== 'cancelled'
+  );
+  
+  const previousBookings = allBookings.filter(
+    (booking: any) =>
+      booking.status === 'completed' || 
+      (booking.slots && slotEndDate(booking.slots) < now)
+  );
+
+  const displayBookings = tabIndex === 0 ? upcomingBookings : previousBookings;
+
+  const renderBookingCard = (b: any) => (
+    <View key={b.id} style={styles.historyCard}>
+      <View style={styles.historyCardRow}>
+        <View style={styles.historyInfo}>
+          <Text style={styles.historyVenue}>
+            {user?.role === 'owner'
+              ? b.player?.full_name
+              : b.slots?.court_name}
+          </Text>
+          <Text style={styles.historySport}>
+            {b.slots?.sport}
+          </Text>
+          <Text style={styles.historyDateTime}>
+            {b.slots?.slot_date}
+          </Text>
+          <Text style={styles.historyDateTime}>
+            {b.slots?.start_time} - {b.slots?.end_time}
+          </Text>
+        </View>
+        <View style={styles.historyRight}>
+          <Text style={styles.historyAmount}>
+            ₹{b.slots?.price}
+          </Text>
+          <StatusBadge status={b.status} />
+        </View>
+      </View>
+    </View>
+  );
 
   return (
     <View style={styles.subScreen}>
       <SubScreenHeader
-        title="Previous Bookings"
+        title={tabIndex === 0 ? 'Upcoming Bookings' : 'Previous Bookings'}
         onBack={onBack}
       />
 
+      {/* Tabs */}
+      <View style={styles.tabsContainer}>
+        {[
+          { label: 'Upcoming', icon: 'schedule' },
+          { label: 'Previous', icon: 'history' },
+        ].map((tab, idx) => (
+          <Pressable
+            key={tab.label}
+            style={[
+              styles.tab,
+              tabIndex === idx && styles.tabActive,
+            ]}
+            onPress={() => setTabIndex(idx)}
+          >
+            <MaterialIcons
+              name={tab.icon as any}
+              size={16}
+              color={tabIndex === idx ? Colors.neonGreen : Colors.textMuted}
+            />
+            <Text
+              style={[
+                styles.tabLabel,
+                tabIndex === idx && styles.tabLabelActive,
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={
-          styles.subContent
-        }
+        contentContainerStyle={styles.subContent}
       >
         {loading ? (
-          <Text
-            style={{
-              color: 'white',
-            }}
-          >
+          <Text style={{ color: 'white' }}>
             Loading...
           </Text>
-        ) : bookings.length ===
-          0 ? (
-          <View
-            style={
-              styles.emptyState
-            }
-          >
-            <Text
-              style={
-                styles.emptyTitle
-              }
-            >
-              No bookings yet
+        ) : displayBookings.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialIcons
+              name={tabIndex === 0 ? 'schedule' : 'history'}
+              size={32}
+              color={Colors.textMuted}
+            />
+            <Text style={styles.emptyTitle}>
+              {tabIndex === 0
+                ? 'No upcoming bookings'
+                : 'No previous bookings'}
             </Text>
           </View>
         ) : (
-          bookings.map(
-            (b: any) => (
-              <View
-                key={b.id}
-                style={
-                  styles.historyCard
-                }
-              >
-                <View
-                  style={
-                    styles.historyCardRow
-                  }
-                >
-                  <View
-                    style={
-                      styles.historyInfo
-                    }
-                  >
-                    <Text
-                      style={
-                        styles.historyVenue
-                      }
-                    >
-                      {user?.role ===
-                      'owner'
-                        ? b.player
-                            ?.full_name
-                        : b.slots
-                            ?.court_name}
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.historySport
-                      }
-                    >
-                      {
-                        b.slots
-                          ?.sport
-                      }
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.historyDateTime
-                      }
-                    >
-                      {
-                        b.slots
-                          ?.slot_date
-                      }
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.historyDateTime
-                      }
-                    >
-                      {
-                        b.slots
-                          ?.start_time
-                      }{' '}
-                      -{' '}
-                      {
-                        b.slots
-                          ?.end_time
-                      }
-                    </Text>
-                  </View>
-
-                  <View
-                    style={
-                      styles.historyRight
-                    }
-                  >
-                    <Text
-                      style={
-                        styles.historyAmount
-                      }
-                    >
-                      ₹
-                      {
-                        b.slots
-                          ?.price
-                      }
-                    </Text>
-
-                    <StatusBadge
-                      status={
-                        b.status
-                      }
-                    />
-                  </View>
-                </View>
-              </View>
-            )
-          )
+          displayBookings.map(renderBookingCard)
         )}
       </ScrollView>
     </View>
@@ -869,6 +849,38 @@ const styles = StyleSheet_create({
   subContent: {
     paddingBottom: Spacing.xl,
     gap: Spacing.sm,
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: Colors.neonGreen,
+  },
+  tabLabel: {
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '600',
+    color: Colors.textMuted,
+  },
+  tabLabelActive: {
+    color: Colors.neonGreen,
+    fontWeight: '700',
   },
   // Avatar edit
   avatarSection: {
