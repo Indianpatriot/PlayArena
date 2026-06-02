@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   TextInput,
   Platform,
+  FlatList,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,6 +20,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
 import { supabase } from '@/services/supabase';
 import { useAuth } from '@/hooks/useAuth';
+
+const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed'];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Slot {
@@ -80,12 +83,152 @@ function timeToMinutes(t: string): number {
   return h * 60 + m;
 }
 
+function parseManualTime(raw: string): string | null {
+  const cleaned = raw.trim().toUpperCase().replace(/\s+/g, ' ');
+  const match = cleaned.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (!match) return null;
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  if (h < 1 || h > 12 || m < 0 || m > 59) return null;
+  return `${h}:${m < 10 ? '0' + m : m} ${match[3]}`;
+}
+
 function isExpiredSlot(slot: Slot, now = Date.now()): boolean {
   const [y, m, d] = slot.slot_date.split('-').map(Number);
   if (!y || !m || !d) return false;
   const endMinutes = timeToMinutes(slot.end_time);
   const endAt = new Date(y, m - 1, d, Math.floor(endMinutes / 60), endMinutes % 60);
   return endAt.getTime() < now;
+}
+
+function availabilityColor(free: number, total: number) {
+  if (free <= 0) return Colors.error;
+  return free / Math.max(1, total) > 0.5 ? Colors.neonGreen : Colors.warning;
+}
+
+// ── Time Picker Modal ──────────────────────────────────────────────────────────
+const TIME_OPTIONS: string[] = (() => {
+  const opts: string[] = [];
+  for (let h = 5; h <= 23; h++) {
+    for (const m of [0, 30]) {
+      if (h === 23 && m === 30) break;
+      const period = h < 12 ? 'AM' : 'PM';
+      const display = h % 12 === 0 ? 12 : h % 12;
+      opts.push(`${display}:${m === 0 ? '00' : '30'} ${period}`);
+    }
+  }
+  return opts;
+})();
+
+interface TimePickerModalProps {
+  visible: boolean;
+  value: string;
+  onSelect: (time: string) => void;
+  onClose: () => void;
+  title: string;
+  minTime?: string;
+}
+
+function TimePickerModal({ visible, value, onSelect, onClose, title, minTime }: TimePickerModalProps) {
+  const insets = useSafeAreaInsets();
+  const minMinutes = minTime ? timeToMinutes(minTime) + 1 : -Infinity;
+  const [manualInput, setManualInput] = useState('');
+  const [manualError, setManualError] = useState('');
+
+  const filteredTimes = useMemo(
+    () => TIME_OPTIONS.filter((t) => timeToMinutes(t) >= minMinutes),
+    [minMinutes]
+  );
+
+  const handleManualSubmit = () => {
+    const parsed = parseManualTime(manualInput);
+    if (!parsed) {
+      setManualError('Format: H:MM AM or PM (e.g. 6:35 AM)');
+      return;
+    }
+    if (timeToMinutes(parsed) <= (minTime ? timeToMinutes(minTime) : -Infinity)) {
+      setManualError('Must be after the minimum time');
+      return;
+    }
+    setManualError('');
+    setManualInput('');
+    onSelect(parsed);
+    handleClose();
+  };
+
+  const handleClose = () => {
+    setManualInput('');
+    setManualError('');
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
+      <View style={tpm.overlay}>
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={handleClose} />
+        <View style={[tpm.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={tpm.header}>
+            <Text style={tpm.title}>{title}</Text>
+            <Pressable onPress={handleClose} hitSlop={12}>
+              <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          {/* Manual input */}
+          <View style={tpm.manualRow}>
+            <TextInput
+              style={[tpm.manualInput, manualError ? tpm.manualInputError : null]}
+              value={manualInput}
+              onChangeText={(v) => { setManualInput(v); setManualError(''); }}
+              placeholder="e.g. 6:35 AM"
+              placeholderTextColor={Colors.textMuted}
+              onSubmitEditing={handleManualSubmit}
+              returnKeyType="done"
+            />
+            <Pressable style={tpm.manualBtn} onPress={handleManualSubmit}>
+              <LinearGradient colors={['#00FF88', '#00CC6A']} style={tpm.manualBtnGrad}>
+                <MaterialIcons name="check" size={16} color={Colors.bgPrimary} />
+              </LinearGradient>
+            </Pressable>
+          </View>
+          {manualError ? <Text style={tpm.manualError}>{manualError}</Text> : null}
+
+          <View style={tpm.orRow}>
+            <View style={tpm.orLine} />
+            <Text style={tpm.orText}>or pick preset</Text>
+            <View style={tpm.orLine} />
+          </View>
+
+          <FlatList
+            data={filteredTimes}
+            keyExtractor={(t) => t}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 8 }}
+            renderItem={({ item }) => {
+              const isSelected = item === value;
+              return (
+                <Pressable
+                  style={[tpm.option, isSelected && tpm.optionSelected]}
+                  onPress={() => { onSelect(item); handleClose(); }}
+                >
+                  {isSelected && (
+                    <LinearGradient
+                      colors={['rgba(0,255,136,0.15)', 'rgba(0,255,136,0.05)']}
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                  )}
+                  <Text style={[tpm.optionText, isSelected && tpm.optionTextSelected]}>{item}</Text>
+                  {isSelected && (
+                    <MaterialIcons name="check" size={18} color={Colors.neonGreen} />
+                  )}
+                </Pressable>
+              );
+            }}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
 // ── Edit Sheet (sub-component) ────────────────────────────────────────────────
@@ -98,9 +241,14 @@ interface EditSheetProps {
 function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
   const [courtName, setCourtName] = useState(slot.court_name);
   const [slotDate, setSlotDate] = useState(slot.slot_date);
+  const [startTime, setStartTime] = useState(slot.start_time);
+  const [endTime, setEndTime] = useState(slot.end_time);
   const [price, setPrice] = useState(slot.price);
   const [saving, setSaving] = useState(false);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [startTimePickerVisible, setStartTimePickerVisible] = useState(false);
+  const [endTimePickerVisible, setEndTimePickerVisible] = useState(false);
+  const expired = isExpiredSlot(slot);
 
   const handleSave = async () => {
     if (!courtName.trim()) {
@@ -115,11 +263,31 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
       Alert.alert('Validation', 'Please select a valid date.');
       return;
     }
+    const parsedStartTime = parseManualTime(startTime);
+    const parsedEndTime = parseManualTime(endTime);
+    if (!parsedStartTime) {
+      Alert.alert('Validation', 'Enter a valid start time (e.g. 6:30 AM).');
+      return;
+    }
+    if (!parsedEndTime) {
+      Alert.alert('Validation', 'Enter a valid end time (e.g. 7:30 PM).');
+      return;
+    }
+    if (timeToMinutes(parsedEndTime) <= timeToMinutes(parsedStartTime)) {
+      Alert.alert('Validation', 'End time must be after start time.');
+      return;
+    }
 
     setSaving(true);
     const { data, error } = await supabase
       .from('slots')
-      .update({ court_name: courtName.trim(), slot_date: slotDate, price: price.trim() })
+      .update({ 
+        court_name: courtName.trim(), 
+        slot_date: slotDate, 
+        start_time: parsedStartTime,
+        end_time: parsedEndTime, 
+        price: String(price || '').trim() 
+      })
       .eq('id', slot.id)
       .select()
       .single();
@@ -150,19 +318,36 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
           placeholder="e.g. Court 1, Turf A"
           placeholderTextColor={Colors.textMuted}
           maxLength={50}
+          editable={!expired}
         />
       </View>
 
       <Text style={es.label}>Booking Date</Text>
       <View style={es.inputRow}>
         <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
-        <Pressable style={[es.input, { justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
-          <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
-            {slotDate || 'YYYY-MM-DD'}
-          </Text>
-        </Pressable>
+        {Platform.OS === 'web' ? (
+          <TextInput
+            {...({ type: 'date' } as any)}
+            style={es.input}
+            value={slotDate}
+            onChangeText={setSlotDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={Colors.textMuted}
+            editable={!expired}
+          />
+        ) : (
+          <Pressable
+            style={[es.input, { justifyContent: 'center' }]}
+            onPress={() => !expired && setDatePickerVisible(true)}
+            disabled={expired}
+          >
+            <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
+              {slotDate || 'YYYY-MM-DD'}
+            </Text>
+          </Pressable>
+        )}
       </View>
-      {datePickerVisible && (
+      {Platform.OS !== 'web' && datePickerVisible && (
         <DateTimePicker
           value={slotDate ? isoToDate(slotDate) : new Date()}
           mode="date"
@@ -172,6 +357,77 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
             if (Platform.OS !== 'ios') setDatePickerVisible(false);
             if (selectedDate) setSlotDate(dateToIso(selectedDate));
           }}
+        />
+      )}
+
+      <Text style={es.label}>Start Time</Text>
+      <View style={es.inputRow}>
+        <MaterialIcons name="access-time" size={16} color={Colors.neonGreen} />
+        {Platform.OS === 'web' ? (
+          <TextInput
+            style={es.input}
+            value={startTime}
+            onChangeText={setStartTime}
+            placeholder="e.g. 6:30 AM"
+            placeholderTextColor={Colors.textMuted}
+            maxLength={8}
+            editable={!expired}
+          />
+        ) : (
+          <Pressable 
+            style={[es.input, { justifyContent: 'center' }]} 
+            onPress={() => !expired && setStartTimePickerVisible(true)}
+            disabled={expired}
+          >
+            <Text style={{ color: startTime ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
+              {startTime || 'Select time'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+      {Platform.OS !== 'web' && startTimePickerVisible && (
+        <TimePickerModal
+          visible={startTimePickerVisible}
+          value={startTime}
+          onSelect={setStartTime}
+          onClose={() => setStartTimePickerVisible(false)}
+          title="Select Start Time"
+        />
+      )}
+
+      <Text style={es.label}>End Time</Text>
+      <View style={es.inputRow}>
+        <MaterialIcons name="access-time" size={16} color={Colors.electricBlue} />
+        {Platform.OS === 'web' ? (
+          <TextInput
+            style={es.input}
+            value={endTime}
+            onChangeText={setEndTime}
+            placeholder="e.g. 7:30 PM"
+            placeholderTextColor={Colors.textMuted}
+            maxLength={8}
+            editable={!expired}
+          />
+        ) : (
+          <Pressable 
+            style={[es.input, { justifyContent: 'center' }]} 
+            onPress={() => !expired && setEndTimePickerVisible(true)}
+            disabled={expired}
+          >
+            <Text style={{ color: endTime ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
+              {endTime || 'Select time'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+      {Platform.OS !== 'web' && endTimePickerVisible && (
+        <TimePickerModal
+          visible={endTimePickerVisible}
+          value={endTime}
+          onSelect={setEndTime}
+          onClose={() => setEndTimePickerVisible(false)}
+          title="Select End Time"
+          minTime={startTime}
         />
       )}
 
@@ -186,6 +442,7 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
           placeholderTextColor={Colors.textMuted}
           keyboardType="numeric"
           maxLength={10}
+          editable={!expired}
         />
       </View>
 
@@ -193,7 +450,7 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
         <Pressable style={es.cancelBtn} onPress={onCancel}>
           <Text style={es.cancelText}>Cancel</Text>
         </Pressable>
-        <Pressable style={es.saveBtn} onPress={handleSave} disabled={saving}>
+        <Pressable style={es.saveBtn} onPress={handleSave} disabled={saving || expired}>
           <LinearGradient colors={['#00FF88', '#00CC6A']} style={es.saveBtnGrad}>
             {saving ? (
               <ActivityIndicator size="small" color={Colors.bgPrimary} />
@@ -209,6 +466,112 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
     </View>
   );
 }
+
+const tpm = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    backgroundColor: '#0E1620',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    maxHeight: 460,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    marginBottom: Spacing.sm,
+  },
+  title: {
+    fontSize: Typography.fontSizes.base,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  manualRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  manualInput: {
+    flex: 1,
+    height: 44,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.inputBg,
+    paddingHorizontal: Spacing.md,
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSizes.sm,
+  },
+  manualInputError: {
+    borderColor: Colors.error,
+  },
+  manualBtn: {
+    borderRadius: Radius.lg,
+    overflow: 'hidden',
+  },
+  manualBtnGrad: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manualError: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.error,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  orRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginVertical: Spacing.sm,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  orText: {
+    fontSize: Typography.fontSizes.xs,
+    color: Colors.textMuted,
+    fontWeight: '500',
+  },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 13,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: Radius.md,
+    overflow: 'hidden',
+  },
+  optionSelected: { borderRadius: Radius.md },
+  optionText: {
+    fontSize: Typography.fontSizes.base,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  optionTextSelected: {
+    color: Colors.neonGreen,
+    fontWeight: '700',
+  },
+});
 
 const es = StyleSheet.create({
   container: {
@@ -309,6 +672,11 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
   const facilities = slot.facilities ?? [];
   const rules = slot.rules ?? [];
   const bookingStatus = slot.bookings?.[0]?.status;
+  const bookedCount = (slot.bookings ?? []).filter((b) => b.status && ACTIVE_BOOKING_STATUSES.includes(b.status)).length;
+  const freeSpots = Math.max(0, Number(slot.total_slots || 1) - bookedCount);
+  const spotColor = availabilityColor(freeSpots, Number(slot.total_slots || 1));
+  const expired = isExpiredSlot(slot);
+  const hasAnyBookings = (slot.bookings ?? []).length > 0;
 
   return (
     <View style={sc.card}>
@@ -352,8 +720,10 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
           <Text style={sc.perHr}>/hr</Text>
         </View>
         <View style={sc.slotCountChip}>
-          <MaterialIcons name="people" size={12} color={Colors.electricBlue} />
-          <Text style={sc.slotCountText}>{slot.total_slots} slot{slot.total_slots !== 1 ? 's' : ''}</Text>
+          <MaterialIcons name="people" size={12} color={spotColor} />
+          <Text style={[sc.slotCountText, { color: spotColor }]}>
+            {freeSpots > 0 ? `${freeSpots}/${slot.total_slots} spots left` : 'Fully Booked'}
+          </Text>
         </View>
         {facilities.length > 0 && (
           <View style={sc.facilitiesChip}>
@@ -391,13 +761,24 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
       )}
 
       {/* Actions */}
-      {!isEditing && (
+      {!isEditing && !expired && (
         <View style={sc.actions}>
           <Pressable style={sc.editBtn} onPress={() => onEdit(slot)} hitSlop={6}>
             <MaterialIcons name="edit" size={14} color={Colors.electricBlue} />
             <Text style={sc.editText}>Edit</Text>
           </Pressable>
-          <Pressable style={sc.deleteBtn} onPress={() => onDelete(slot.id)} hitSlop={6}>
+          <Pressable
+            style={[sc.deleteBtn, hasAnyBookings && { opacity: 0.5 }]}
+            onPress={() => {
+              if (hasAnyBookings) {
+                Alert.alert('Cannot Delete', 'This slot has bookings. Deleting it may affect booking history.');
+                return;
+              }
+              onDelete(slot.id);
+            }}
+            hitSlop={6}
+            disabled={hasAnyBookings}
+          >
             <MaterialIcons name="delete-outline" size={14} color={Colors.error} />
             <Text style={sc.deleteText}>Delete</Text>
           </Pressable>
@@ -405,7 +786,7 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
       )}
 
       {/* Inline edit form */}
-      {isEditing && (
+      {isEditing && !expired && (
         <EditSheet slot={slot} onCancel={onEditCancel} onSaved={onEditSaved} />
       )}
     </View>
@@ -678,13 +1059,29 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
   }, [visible]);
 
   const handleDelete = useCallback((id: string) => {
-    Alert.alert('Delete Slot', 'This slot will be permanently removed. Continue?', [
+    const slot = allSlots.find((s) => s.id === id);
+    if (slot && isExpiredSlot(slot, nowTick)) {
+      Alert.alert('Not Allowed', 'Previous/expired slots cannot be deleted.');
+      return;
+    }
+
+    Alert.alert('Delete this slot?', 'This slot will be permanently removed. Continue?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase.from('slots').delete().eq('id', id);
+          if (!user?.id) {
+            Alert.alert('Not Allowed', 'You must be logged in as an owner.');
+            return;
+          }
+
+          // Include owner_id for RLS/ownership policies.
+          const { error } = await supabase
+            .from('slots')
+            .delete()
+            .eq('id', id)
+            .eq('owner_id', user.id);
           if (error) {
             Alert.alert('Delete Failed', error.message);
           } else {
@@ -693,7 +1090,7 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
         },
       },
     ]);
-  }, []);
+  }, [allSlots, nowTick, user?.id]);
 
   const handleEditSaved = useCallback((updated: Slot) => {
     setAllSlots((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));

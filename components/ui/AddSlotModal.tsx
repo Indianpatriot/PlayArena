@@ -108,6 +108,10 @@ function dateToIso(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+function todayIsoDate() {
+  return dateToIso(new Date());
+}
+
 function isoToDate(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return new Date();
@@ -365,11 +369,11 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove, isPool }: SlotRowP
   const [startPickerOpen, setStartPickerOpen] = useState(false);
   const [endPickerOpen, setEndPickerOpen] = useState(false);
 
-  const courtsNum = Math.max(1, Math.min(10, parseInt(row.courts || '1', 10) || 1));
+  const courtsNum = Math.max(1, Math.min(100, parseInt(row.courts || '1', 10) || 1));
 
   const handleCourtsChange = (val: string) => {
     const n = parseInt(val, 10);
-    const num = isNaN(n) ? 1 : Math.max(1, Math.min(10, n));
+    const num = isNaN(n) ? 1 : Math.max(1, Math.min(100, n));
     const prices = Array.from({ length: num }, (_, i) => row.prices[i] ?? row.commonPrice ?? '');
     onUpdate(row.id, { courts: val === '' ? '' : String(num), prices });
   };
@@ -430,7 +434,7 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove, isPool }: SlotRowP
       <View style={sr.courtsRow}>
         <Text style={sr.label}>
           {isPool
-            ? courtsNum > 1 ? 'Lanes Available' : 'Pool Session'
+            ? 'Pool Capacity'
             : courtsNum > 1 ? 'Courts Available' : 'Slots Available'}
         </Text>
         <View style={sr.courtsCounter}>
@@ -446,15 +450,15 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove, isPool }: SlotRowP
             value={row.courts}
             onChangeText={handleCourtsChange}
             keyboardType="numeric"
-            maxLength={2}
+            maxLength={3}
             textAlign="center"
           />
           <Pressable
             hitSlop={8}
-            onPress={() => handleCourtsChange(String(Math.min(10, courtsNum + 1)))}
+            onPress={() => handleCourtsChange(String(Math.min(100, courtsNum + 1)))}
             style={sr.counterBtn}
           >
-            <MaterialIcons name="add" size={16} color={courtsNum >= 10 ? Colors.textMuted : Colors.textPrimary} />
+            <MaterialIcons name="add" size={16} color={courtsNum >= 100 ? Colors.textMuted : Colors.textPrimary} />
           </Pressable>
         </View>
       </View>
@@ -524,9 +528,9 @@ function SlotRow({ row, index, canRemove, onUpdate, onRemove, isPool }: SlotRowP
         <View style={sr.courtsPreview}>
           {Array.from({ length: courtsNum }, (_, i) => (
             <View key={i} style={sr.courtChip}>
-              <Text style={sr.courtChipText}>{isPool ? `Lane ${i + 1}` : `Court ${i + 1}`}</Text>
+              <Text style={sr.courtChipText}>{isPool ? `${courtsNum} spots` : `Court ${i + 1}`}</Text>
             </View>
-          ))}
+          )).slice(0, isPool ? 1 : 12)}
         </View>
       )}
 
@@ -818,7 +822,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
       }
     }
     return null;
-  }, [selectedSport, customSportName, rows]);
+  }, [selectedSport, customSportName, courtName, slotDate, rows]);
 
   const handleSave = useCallback(async () => {
     const err = validate();
@@ -1029,11 +1033,22 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                   <Text style={styles.sectionTitle}>Booking Date</Text>
                   <View style={[styles.othersInputRow, { borderColor: slotDate.trim() ? 'rgba(0,191,255,0.35)' : Colors.border }]}>
                     <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
-                    <Pressable style={[styles.othersInput, { marginLeft: 8, flex: 1, justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
-                      <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
-                        {slotDate || 'YYYY-MM-DD'}
-                      </Text>
-                    </Pressable>
+                    {Platform.OS === 'web' ? (
+                      <TextInput
+                        {...({ type: 'date', min: todayIsoDate() } as any)}
+                        style={[styles.othersInput, { marginLeft: 8 }]}
+                        value={slotDate}
+                        onChangeText={setSlotDate}
+                        placeholder="YYYY-MM-DD"
+                        placeholderTextColor={Colors.textMuted}
+                      />
+                    ) : (
+                      <Pressable style={[styles.othersInput, { marginLeft: 8, flex: 1, justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
+                        <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
+                          {slotDate || 'YYYY-MM-DD'}
+                        </Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       hitSlop={8}
                       onPress={() => setSlotDate(dateToIso(new Date()))}
@@ -1041,7 +1056,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                       <Text style={{ fontSize: 11, color: Colors.neonGreen, fontWeight: '700', paddingRight: 4 }}>Today</Text>
                     </Pressable>
                   </View>
-                  {datePickerVisible && (
+                  {Platform.OS !== 'web' && datePickerVisible && (
                     <DateTimePicker
                       value={slotDate ? isoToDate(slotDate) : new Date()}
                       mode="date"

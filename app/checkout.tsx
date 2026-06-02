@@ -17,7 +17,7 @@ import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/services/supabase';
 
-const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed', 'completed'];
+const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed'];
 
 type PaymentMethod = 'upi' | 'card';
 
@@ -33,6 +33,7 @@ interface CheckoutSlot {
   slotDate: string;
   startTime: string;
   endTime: string;
+  totalSlots?: number;
   rules: string[];
 }
 
@@ -60,7 +61,7 @@ function formatDate(date: string): string {
 }
 
 function parseTimeOnDate(date: string, time: string): Date | null {
-  const match = time.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const match = time?.trim().match(/^(\d{1,2}):(\d{1,2})\s*(AM|PM)$/i);
   if (!date || !match) return null;
 
   let hours = Number(match[1]);
@@ -75,6 +76,11 @@ function parseTimeOnDate(date: string, time: string): Date | null {
 
   parsed.setHours(hours, minutes, 0, 0);
   return parsed;
+}
+
+function isExpiredSlot(slot: CheckoutSlot) {
+  const end = parseTimeOnDate(slot.slotDate, slot.endTime);
+  return !end || end <= new Date();
 }
 
 function getDuration(date: string, startTime: string, endTime: string): string {
@@ -138,18 +144,27 @@ export default function CheckoutScreen() {
     };
   }, [user?.name]);
 
-  const isSlotBooked = async () => {
+  const isSlotUnavailable = async () => {
     if (!slot?.id) return true;
+
+    const { data: slotData, error: slotError } = await supabase
+      .from('slots')
+      .select('total_slots, slot_date, end_time')
+      .eq('id', slot.id)
+      .maybeSingle();
+
+    if (slotError) throw slotError;
+    if (!slotData || isExpiredSlot({ ...slot, slotDate: slotData.slot_date, endTime: slotData.end_time })) return true;
 
     const { data, error } = await supabase
       .from('bookings')
       .select('id')
       .eq('slot_id', slot.id)
       .in('status', ACTIVE_BOOKING_STATUSES)
-      .limit(1);
+      .limit(Math.max(1, Number(slotData.total_slots || 1)));
 
     if (error) throw error;
-    return (data ?? []).length > 0;
+    return (data ?? []).length >= Math.max(1, Number(slotData.total_slots || 1));
   };
 
   const showUnavailable = () => {
@@ -167,7 +182,21 @@ export default function CheckoutScreen() {
         return;
       }
 
-      if (await isSlotBooked()) {
+      // Prevent duplicate booking attempts by the same player for the same slot
+      const { data: existingBooking, error: existingError } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('player_id', user.id)
+        .eq('slot_id', slot.id)
+        .in('status', ACTIVE_BOOKING_STATUSES)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (existingBooking?.id) {
+        showUnavailable();
+        return;
+      }
+
+      if (await isSlotUnavailable()) {
         showUnavailable();
         return;
       }
@@ -181,7 +210,7 @@ export default function CheckoutScreen() {
 
       setTimeout(async () => {
         try {
-          if (await isSlotBooked()) {
+          if (await isSlotUnavailable()) {
             setProcessing(false);
             showUnavailable();
             return;
@@ -193,6 +222,7 @@ export default function CheckoutScreen() {
             owner_id: slot.ownerId,
             payment_status: 'paid',
             status: 'confirmed',
+            booking_date: new Date().toISOString(),
           });
 
           if (error) {
@@ -205,10 +235,12 @@ export default function CheckoutScreen() {
             throw error;
           }
 
-          setProcessing(false);
-          Alert.alert('Booking Confirmed', 'Your slot has been booked successfully.', [
-            { text: 'Done', onPress: () => router.replace('/dashboard') },
-          ]);
+          // Keep showing the processing UI briefly, then auto-redirect home.
+          setProcessingMessage('Booking confirmed!');
+          setTimeout(() => {
+            setProcessing(false);
+            router.replace('/dashboard');
+          }, 1000);
         } catch (err: any) {
           setProcessing(false);
           Alert.alert('Payment Failed', err.message ?? 'Could not confirm booking.');

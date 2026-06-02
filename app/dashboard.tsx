@@ -21,7 +21,8 @@ import { LocationData } from '@/services/location';
 import { PREDEFINED_SPORTS } from '@/constants/sports';
 import { supabase } from '@/services/supabase';
 
-const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed', 'completed'];
+const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed'];
+const UPCOMING_BOOKING_STATUSES = ['pending', 'confirmed'];
 
 // ── Sport category definitions ────────────────────────────────────────────────
 const SPORT_CATEGORIES = [
@@ -39,6 +40,7 @@ interface Venue {
   price: number;
   distance: string;
   freeSlots: number;
+  totalSlots: number;
   slotDate: string;
   startTime: string;
   endTime: string;
@@ -46,6 +48,45 @@ interface Venue {
   courtName: string;
   ownerId: string;
   rules: string[];
+}
+
+interface UpcomingGame {
+  id: string;
+  sport: string;
+  turfName: string;
+  courtName: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  location: string;
+}
+
+function slotEndDate(slotDate: string, endTime: string) {
+  const match = endTime?.trim().match(/^(\d{1,2}):(\d{1,2})\s*(AM|PM)$/i);
+  const [y, m, d] = slotDate?.trim().split('-').map(Number);
+  if (!match || !y || !m || !d) return new Date(NaN);
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && hours !== 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return new Date(y, m - 1, d, hours, minutes);
+}
+
+function todayIsoDate() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function sportMeta(sport: string) {
+  return SPORT_CATEGORIES.find((item) => item.label === sport) ?? SPORT_CATEGORIES[SPORT_CATEGORIES.length - 1];
+}
+
+function availabilityColor(free: number, total: number) {
+  if (free <= 0) return Colors.error;
+  return free / Math.max(1, total) > 0.5 ? Colors.neonGreen : Colors.warning;
 }
 
 // ── Placeholder loading skeleton ──────────────────────────────────────────────
@@ -95,6 +136,8 @@ export default function DashboardScreen() {
   const [location, setLocation] = useState<LocationData | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
+  const [upcomingGames, setUpcomingGames] = useState<UpcomingGame[]>([]);
+  const [loadingUpcomingGames, setLoadingUpcomingGames] = useState(false);
   const [loadingVenues, setLoadingVenues] = useState(false);
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   const [addSlotVisible, setAddSlotVisible] = useState(false);
@@ -121,6 +164,18 @@ export default function DashboardScreen() {
     setLoadingVenues(true);
 
     try {
+      // For players: hide slots already booked by the current player (even if capacity > 1),
+      // so the booked slot disappears immediately after successful booking.
+      const { data: myBookings, error: myBookingsError } = user?.id && user.role !== 'owner'
+        ? await supabase
+            .from('bookings')
+            .select('slot_id')
+            .eq('player_id', user.id)
+            .in('status', ACTIVE_BOOKING_STATUSES)
+        : { data: [], error: null };
+      if (myBookingsError) throw myBookingsError;
+      const myBookedSlotIds = new Set((myBookings ?? []).map((b: any) => b.slot_id).filter(Boolean));
+
       const { data: bookedSlots, error: bookingsError } = await supabase
         .from('bookings')
         .select('slot_id')
@@ -133,6 +188,10 @@ export default function DashboardScreen() {
       const bookedSlotIds = (bookedSlots ?? [])
         .map((booking: any) => booking.slot_id)
         .filter(Boolean);
+      const bookedCounts = bookedSlotIds.reduce((acc: Record<string, number>, id: string) => {
+        acc[id] = (acc[id] ?? 0) + 1;
+        return acc;
+      }, {});
 
       let slotsQuery = supabase
         .from('slots')
@@ -142,11 +201,9 @@ export default function DashboardScreen() {
             turf_name,
             location
           )
-        `);
-
-      if (bookedSlotIds.length > 0) {
-        slotsQuery = slotsQuery.not('id', 'in', `(${bookedSlotIds.join(',')})`);
-      }
+        `)
+        .gte('slot_date', todayIsoDate())
+        .order('slot_date', { ascending: true });
 
       const { data, error } = await slotsQuery;
 
@@ -154,23 +211,32 @@ export default function DashboardScreen() {
         throw error;
       }
 
-      const mappedVenues = (data || []).map((slot: any) => ({
-        id: slot.id,
-        ownerId: slot.owner_id,
-        name: slot.owner?.turf_name || 'Sports Arena',
-        city: slot.owner?.location || 'Unknown Location',
-        courtName: slot.court_name,
-        sport: slot.sport,
-        rating: 4.5,
-        price: Number(slot.price || 0),
-        pricePerHour: `₹${slot.price || 0}/hr`,
-        distance: 'Available',
-        freeSlots: slot.total_slots || 0,
-        slotDate: slot.slot_date,
-        startTime: slot.start_time,
-        endTime: slot.end_time,
-        rules: slot.rules || [],
-      }));
+      const now = new Date();
+      const mappedVenues = (data || [])
+        .map((slot: any) => {
+          const totalSlots = Math.max(1, Number(slot.total_slots || 1));
+          const freeSlots = Math.max(0, totalSlots - (bookedCounts[slot.id] ?? 0));
+          return {
+            id: slot.id,
+            ownerId: slot.owner_id,
+            name: slot.owner?.turf_name || 'Sports Arena',
+            city: slot.owner?.location || 'Unknown Location',
+            courtName: slot.court_name,
+            sport: slot.sport,
+            rating: 4.5,
+            price: Number(slot.price || 0),
+            pricePerHour: `₹${slot.price || 0}/hr`,
+            distance: 'Available',
+            freeSlots,
+            totalSlots,
+            slotDate: slot.slot_date,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            rules: slot.rules || [],
+          };
+        })
+        .filter((slot: Venue) => (user?.id && user.role !== 'owner' ? !myBookedSlotIds.has(slot.id) : true))
+        .filter((slot: Venue) => slotEndDate(slot.slotDate, slot.endTime) > now);
 
       setVenues(mappedVenues);
     } catch (err) {
@@ -179,12 +245,72 @@ export default function DashboardScreen() {
     } finally {
       setLoadingVenues(false);
     }
-  }, []);
+  }, [user?.id, user?.role]);
+
+  const fetchUpcomingGames = useCallback(async () => {
+    if (!user?.id || user.role === 'owner') return;
+
+    setLoadingUpcomingGames(true);
+    try {
+      const today = todayIsoDate();
+      const { data, error } = await supabase
+        .from('bookings')
+        .select(`
+          id,
+          status,
+          slots!inner (
+            sport,
+            court_name,
+            slot_date,
+            start_time,
+            end_time,
+            owner:profiles!slots_owner_id_fkey (
+              turf_name,
+              location
+            )
+          )
+        `)
+        .eq('player_id', user.id)
+        .in('status', UPCOMING_BOOKING_STATUSES)
+        .gte('slots.slot_date', today)
+        .order('slot_date', { foreignTable: 'slots', ascending: true })
+        .limit(12);
+
+      if (error) throw error;
+
+      const now = new Date();
+      const games = (data ?? [])
+        .filter((booking: any) => booking.slots && slotEndDate(booking.slots.slot_date, booking.slots.end_time) > now)
+        .sort((a: any, b: any) =>
+          slotEndDate(a.slots.slot_date, a.slots.end_time).getTime() -
+          slotEndDate(b.slots.slot_date, b.slots.end_time).getTime()
+        )
+        .slice(0, 5)
+        .map((booking: any) => ({
+          id: booking.id,
+          sport: booking.slots.sport,
+          turfName: booking.slots.owner?.turf_name ?? 'Sports Arena',
+          courtName: booking.slots.court_name,
+          slotDate: booking.slots.slot_date,
+          startTime: booking.slots.start_time,
+          endTime: booking.slots.end_time,
+          location: booking.slots.owner?.location ?? 'Unknown Location',
+        }));
+
+      setUpcomingGames(games);
+    } catch (err) {
+      console.error('Fetch upcoming games error:', err);
+      setUpcomingGames([]);
+    } finally {
+      setLoadingUpcomingGames(false);
+    }
+  }, [user?.id, user?.role]);
 
 
   useEffect(() => {
     fetchVenues();
-  }, [fetchVenues]);
+    fetchUpcomingGames();
+  }, [fetchUpcomingGames, fetchVenues]);
 
   const handleSlotSave = useCallback((data: SlotData) => {
     setSavedSlots((prev) => [...prev, data]);
@@ -213,13 +339,14 @@ export default function DashboardScreen() {
       .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
         fetchVenues();
+        fetchUpcomingGames();
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchVenues, isOwner, user?.id]);
+  }, [fetchUpcomingGames, fetchVenues, isOwner, user?.id]);
 
   return (
     <View style={styles.container}>
@@ -306,6 +433,8 @@ export default function DashboardScreen() {
               selectedSport={selectedSport}
               onSelectSport={(s) => setSelectedSport(s === selectedSport ? null : s)}
               venues={venues}
+              upcomingGames={upcomingGames}
+              loadingUpcomingGames={loadingUpcomingGames}
               loadingVenues={loadingVenues}
               locationSelected={!!location}
               onRetry={fetchVenues}
@@ -351,6 +480,8 @@ interface PlayerDashboardProps {
   selectedSport: string | null;
   onSelectSport: (sport: string) => void;
   venues: Venue[];
+  upcomingGames: UpcomingGame[];
+  loadingUpcomingGames: boolean;
   loadingVenues: boolean;
   locationSelected: boolean;
   onRetry: () => void;
@@ -362,6 +493,8 @@ function PlayerDashboard({
   selectedSport,
   onSelectSport,
   venues,
+  upcomingGames,
+  loadingUpcomingGames,
   loadingVenues,
   locationSelected,
   onRetry,
@@ -369,6 +502,8 @@ function PlayerDashboard({
 }: PlayerDashboardProps) {
   return (
     <View>
+      <UpcomingGamesSection games={upcomingGames} loading={loadingUpcomingGames} />
+
       {/* Sport Categories */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
@@ -464,7 +599,61 @@ function PlayerDashboard({
 }
 
 // ── Venue Card ────────────────────────────────────────────────────────────────
+function UpcomingGamesSection({ games, loading }: { games: UpcomingGame[]; loading: boolean }) {
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Upcoming Games</Text>
+      </View>
+      {loading ? (
+        <ActivityIndicator color={Colors.neonGreen} />
+      ) : games.length === 0 ? (
+        <Text style={styles.upcomingEmpty}>No upcoming games</Text>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.horizontalList}
+          nestedScrollEnabled
+        >
+          {games.map((game) => (
+            <UpcomingGameCard key={game.id} game={game} />
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+function UpcomingGameCard({ game }: { game: UpcomingGame }) {
+  const meta = sportMeta(game.sport);
+  return (
+    <View style={styles.upcomingCard}>
+      <LinearGradient colors={['rgba(0,255,136,0.10)', 'rgba(255,255,255,0.03)']} style={StyleSheet.absoluteFillObject} />
+      <View style={styles.upcomingTopRow}>
+        <View style={[styles.upcomingIcon, { borderColor: meta.color + '55', backgroundColor: meta.color + '18' }]}>
+          <MaterialCommunityIcons name={meta.icon as any} size={20} color={meta.color} />
+        </View>
+        <View style={styles.upcomingBadge}>
+          <Text style={styles.upcomingBadgeText}>Upcoming</Text>
+        </View>
+      </View>
+      <Text style={styles.upcomingSport}>{game.sport}</Text>
+      <Text style={styles.upcomingTurf} numberOfLines={1}>{game.turfName}</Text>
+      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.courtName}</Text>
+      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.slotDate}</Text>
+      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.startTime} - {game.endTime}</Text>
+      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.location}</Text>
+    </View>
+  );
+}
+
 const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Venue;  onBook: () => void }) {
+  const availability = availabilityColor(venue.freeSlots, venue.totalSlots);
+  const sportEntry = PREDEFINED_SPORTS.find((s) => s.key.toLowerCase() === venue.sport?.toLowerCase());
+  const isPool = !!sportEntry?.isPool;
+  const capacityPercent = Math.round((venue.freeSlots / Math.max(1, venue.totalSlots)) * 100);
+  
   return (
     <Pressable style={styles.venueCard}>
       <LinearGradient
@@ -520,6 +709,32 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
     🕒 {venue.startTime} - {venue.endTime}
   </Text>
 
+  {/* Pool capacity indicator */}
+  {isPool && (
+    <View style={{ marginTop: 10, marginBottom: 8 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+        <Text style={{ fontSize: 12, color: Colors.textMuted }}>Pool Capacity</Text>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: availability }}>
+          {venue.freeSlots}/{venue.totalSlots} spots left
+        </Text>
+      </View>
+      <View style={{
+        height: 6,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 3,
+        overflow: 'hidden',
+      }}>
+        <View
+          style={{
+            height: '100%',
+            width: `${capacityPercent}%`,
+            backgroundColor: availability,
+          }}
+        />
+      </View>
+    </View>
+  )}
+
   {/* Bottom row */}
   <View
     style={{
@@ -542,17 +757,22 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
 
       <Text
         style={{
-          color: Colors.neonGreen,
+          color: availability,
           fontSize: 13,
         }}
       >
-        {venue.freeSlots} slots free
+        {venue.freeSlots > 0
+          ? isPool
+            ? `${venue.freeSlots}/${venue.totalSlots} spots left`
+            : `${venue.freeSlots} slots left`
+          : 'Fully Booked'}
       </Text>
     </View>
 
     <Pressable
-      style={styles.bookBtn}
+      style={[styles.bookBtn, venue.freeSlots <= 0 && { opacity: 0.45 }]}
       onPress={onBook}
+      disabled={venue.freeSlots <= 0}
     >
       <LinearGradient
         colors={['#00FF88', '#00CC6A']}
@@ -833,6 +1053,59 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSizes.sm,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  upcomingEmpty: {
+    color: Colors.textMuted,
+    fontSize: Typography.fontSizes.sm,
+  },
+  upcomingCard: {
+    width: 210,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.bgGlassBorder,
+    backgroundColor: Colors.bgCard,
+    padding: Spacing.md,
+    overflow: 'hidden',
+    gap: 5,
+  },
+  upcomingTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  upcomingIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  upcomingBadge: {
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(0,255,136,0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  upcomingBadgeText: {
+    color: Colors.neonGreen,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  upcomingSport: {
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '800',
+  },
+  upcomingTurf: {
+    color: Colors.textSecondary,
+    fontSize: Typography.fontSizes.sm,
+    fontWeight: '700',
+  },
+  upcomingMeta: {
+    color: Colors.textMuted,
+    fontSize: Typography.fontSizes.xs,
   },
   // Venue card
   venueCard: {
