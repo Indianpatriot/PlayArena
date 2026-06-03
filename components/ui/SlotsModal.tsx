@@ -71,16 +71,29 @@ function isValidIsoDate(iso: string): boolean {
 }
 
 function timeToMinutes(t: string): number {
-  const parts = t.trim().toUpperCase().split(' ');
-  if (parts.length < 2) return 0;
-  const [timePart, period] = parts;
-  const [hStr, mStr] = timePart.split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  if (isNaN(h) || isNaN(m)) return 0;
-  if (period === 'PM' && h !== 12) h += 12;
-  if (period === 'AM' && h === 12) h = 0;
-  return h * 60 + m;
+  const raw = (t ?? '').trim();
+  if (!raw) return -1;
+
+  const meridianMatch = raw.toUpperCase().match(/^(\d{1,2}):(\d{1,2})\s*(AM|PM)$/);
+  if (meridianMatch) {
+    let h = parseInt(meridianMatch[1], 10);
+    const m = parseInt(meridianMatch[2], 10);
+    const period = meridianMatch[3];
+    if (isNaN(h) || isNaN(m) || h < 1 || h > 12 || m < 0 || m > 59) return -1;
+    if (period === 'PM' && h !== 12) h += 12;
+    if (period === 'AM' && h === 12) h = 0;
+    return h * 60 + m;
+  }
+
+  const twentyFourHourMatch = raw.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (twentyFourHourMatch) {
+    const h = parseInt(twentyFourHourMatch[1], 10);
+    const m = parseInt(twentyFourHourMatch[2], 10);
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return -1;
+    return h * 60 + m;
+  }
+
+  return -1;
 }
 
 function parseManualTime(raw: string): string | null {
@@ -97,6 +110,7 @@ function isExpiredSlot(slot: Slot, now = Date.now()): boolean {
   const [y, m, d] = slot.slot_date.split('-').map(Number);
   if (!y || !m || !d) return false;
   const endMinutes = timeToMinutes(slot.end_time);
+  if (endMinutes < 0) return false;
   const endAt = new Date(y, m - 1, d, Math.floor(endMinutes / 60), endMinutes % 60);
   return endAt.getTime() < now;
 }

@@ -1041,6 +1041,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
                         onChangeText={setSlotDate}
                         placeholder="YYYY-MM-DD"
                         placeholderTextColor={Colors.textMuted}
+                        editable={false}
                       />
                     ) : (
                       <Pressable style={[styles.othersInput, { marginLeft: 8, flex: 1, justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
