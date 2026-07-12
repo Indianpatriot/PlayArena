@@ -1,0 +1,32 @@
+The following packages should be updated for best compatibility with the installed expo version:
+  expo@54.0.34 - expected version: ~54.0.35
+  expo-font@14.0.11 - expected version: ~14.0.12
+  expo-router@6.0.23 - expected version: ~6.0.24
+  expo-file-system@19.0.22 - expected version: ~19.0.23
+  expo-localization@17.0.8 - expected version: ~17.0.9
+  @types/react@19.0.14 - expected version: ~19.1.10
+  eslint-config-expo@9.2.0 - expected version: ~10.0.0
+  typescript@5.8.3 - expected version: ~5.9.2
+Your project may not work correctly until you install the expected versions of the packages.
+"shadow*" style props are deprecated. Use "boxShadow".
+"shadow*" style props are deprecated. Use "boxShadow".
+D:\PlayArena\node_modules\@expo\cli\build\src\utils\errors.js:130
+    throw error;
+    ^
+
+Error: write EPIPE
+    at ChildProcess.target._send (node:internal/child_process:877:20)
+    at ChildProcess.target.send (node:internal/child_process:751:19)
+    at ChildProcessWorker.initialize (D:\PlayArena\node_modules\jest-worker\build\workers\ChildProcessWorker.js:169:17)
+    at ChildProcessWorker._onExit (D:\PlayArena\node_modules\jest-worker\build\workers\ChildProcessWorker.js:334:12)
+    at ChildProcess.emit (node:events:508:28)
+    at Process.ChildProcess._handle.onexit (node:internal/child_process:294:12)
+Emitted 'error' event on ChildProcess instance at:
+    at node:internal/child_process:881:39
+    at processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  errno: -4047,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v24.9.0

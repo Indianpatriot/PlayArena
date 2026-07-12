@@ -110,7 +110,15 @@ export default function CheckoutScreen() {
   const [profile, setProfile] = useState({ name: user?.name ?? '', phone: '' });
 
   const duration = slot ? getDuration(slot.slotDate, slot.startTime, slot.endTime) : '';
-  const totalAmount = slot?.price ?? 0;
+
+  const slotPrice = slot?.price ?? 0;
+
+  const platformFee = Math.min(
+    120,
+    Math.max(25, Math.round(slotPrice * 0.02))
+  );
+
+  const totalAmount = slotPrice + platformFee;
 
   useEffect(() => {
     let mounted = true;
@@ -313,6 +321,9 @@ export default function CheckoutScreen() {
         <View style={styles.priceHighlight}>
           <Text style={styles.priceLabel}>Total Amount</Text>
           <Text style={styles.priceValue}>₹{totalAmount}</Text>
+          <Text style={styles.priceMeta}>
+            Includes ₹{platformFee} platform fee
+          </Text>
           <Text style={styles.priceMeta}>{slot.pricePerHour}</Text>
         </View>
 
@@ -327,11 +338,17 @@ export default function CheckoutScreen() {
         </GlassCard>
 
         <GlassCard padding={18} style={styles.section}>
-          <Text style={styles.sectionTitle}>Payment Summary</Text>
-          <SummaryRow label="Slot Price" value={`₹${totalAmount}`} />
-          <SummaryRow label="Platform Fee" value="₹0" />
+          <SummaryRow label="Slot Price" value={`₹${slotPrice}`} />
+          <SummaryRow
+            label="Platform Fee"
+            value={`₹${platformFee}`}
+          />
           <View style={styles.divider} />
-          <SummaryRow label="Total Amount" value={`₹${totalAmount}`} strong />
+          <SummaryRow
+            label="Total Amount"
+            value={`₹${totalAmount}`}
+            strong
+          />
         </GlassCard>
 
         <GlassCard padding={18} style={styles.section}>
