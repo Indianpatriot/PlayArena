@@ -200,10 +200,6 @@ export const AuthService = {
     );
   },
 
-  async socialLogin(_provider: 'google' | 'apple'): Promise<AuthUser> {
-    throw new Error('Social login is coming soon. Please sign in with your email and password.');
-  },
-
   async forgotPassword(email: string): Promise<void> {
     if (!email.trim() || !email.includes('@')) {
       throw new Error('Please enter a valid email address.');

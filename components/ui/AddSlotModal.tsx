@@ -10,9 +10,7 @@ import {
   TextInput,
   Alert,
   FlatList,
-  Platform,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -108,21 +106,30 @@ function dateToIso(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-function todayIsoDate() {
-  return dateToIso(new Date());
+function todayDisplayDate() {
+  const now = new Date();
+  return `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`;
 }
 
-function isoToDate(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  if (!y || !m || !d) return new Date();
-  return new Date(y, m - 1, d);
-}
-
-function isValidIsoDate(iso: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
-  const [y, m, d] = iso.split('-').map(Number);
+function parseDisplayDate(input: string): Date | null {
+  if (!/^\d{2}-\d{2}-\d{4}$/.test(input.trim())) return null;
+  const [d, m, y] = input.trim().split('-').map(Number);
   const date = new Date(y, m - 1, d);
-  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return date;
+}
+
+function displayDateToIso(input: string): string | null {
+  const date = parseDisplayDate(input);
+  return date ? dateToIso(date) : null;
+}
+
+function slotDateTime(dateInput: string, time: string): Date | null {
+  const date = parseDisplayDate(dateInput);
+  if (!date) return null;
+  const minutes = timeToMinutes(time);
+  if (minutes < 0) return null;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(minutes / 60), minutes % 60);
 }
 
 function makeRow(): TimeSlotRow {
@@ -747,7 +754,6 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
   const [customSportError, setCustomSportError] = useState('');
   const [courtName, setCourtName] = useState('');
   const [slotDate, setSlotDate] = useState('');
-  const [datePickerVisible, setDatePickerVisible] = useState(false);
 
   React.useEffect(() => {
     if (visible) loadCustomSports().then(setCustomSports).catch(() => {});
@@ -761,7 +767,6 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     setCustomSportError('');
     setCourtName('');
     setSlotDate('');
-    setDatePickerVisible(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -791,11 +796,15 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     if (selectedSport === OTHERS_KEY && !customSportName.trim()) return 'Please enter a custom sport name.';
     if (!courtName.trim()) return 'Please enter a court / lane name.';
     if (!slotDate.trim()) return 'Please enter a booking date.';
-    if (!isValidIsoDate(slotDate)) return 'Please select a valid booking date.';
+    const parsedDate = parseDisplayDate(slotDate);
+    if (!parsedDate) return 'Use DD-MM-YYYY format';
+    if (parsedDate < new Date(new Date().setHours(0, 0, 0, 0))) return 'Date cannot be in the past';
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (!r.startTime) return `Slot ${i + 1}: Select a start time.`;
       if (!r.endTime) return `Slot ${i + 1}: Select an end time.`;
+      const startAt = slotDateTime(slotDate, r.startTime);
+      if (!startAt || startAt <= new Date()) return 'Slot time must be in the future';
       if (timeToMinutes(r.endTime) <= timeToMinutes(r.startTime))
         return `Slot ${i + 1}: End time must be after start time.`;
       const n = parseInt(r.courts, 10);
@@ -842,6 +851,12 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     const ownerId = userData?.user?.id;
 
     // Build insert rows (one per time slot row)
+    const slotDateIso = displayDateToIso(slotDate);
+    if (!slotDateIso) {
+      Alert.alert('Validation Error', 'Use DD-MM-YYYY format');
+      return;
+    }
+
     const inserts = rows.map((r) => {
       const n = parseInt(r.courts, 10);
       const priceVal =
@@ -850,7 +865,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
         owner_id: ownerId,
         sport: sportName,
         court_name: courtName.trim(),
-        slot_date: slotDate,
+        slot_date: slotDateIso,
         start_time: r.startTime,
         end_time: r.endTime,
         total_slots: n,
@@ -870,7 +885,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
     const data: SlotData = {
       sport: sportName,
       courtName: courtName.trim(),
-      slotDate,
+      slotDate: slotDateIso,
       slots: rows.map((r) => {
         const n = parseInt(r.courts, 10);
         const unitLabel = isPool
@@ -902,6 +917,7 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
   ];
   const sport = allSportsForDisplay.find((s) => s.key === selectedSport);
   const frCount = facilitiesRules.facilities.length + facilitiesRules.rules.length;
+  const validationError = useMemo(() => validate(), [validate]);
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
@@ -1030,45 +1046,24 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
 
                 {/* Booking Date */}
                 <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Booking Date</Text>
+                  <Text style={styles.sectionTitle}>Date (DD-MM-YYYY)</Text>
                   <View style={[styles.othersInputRow, { borderColor: slotDate.trim() ? 'rgba(0,191,255,0.35)' : Colors.border }]}>
                     <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
-                    {Platform.OS === 'web' ? (
-                      <TextInput
-                        {...({ type: 'date', min: todayIsoDate() } as any)}
-                        style={[styles.othersInput, { marginLeft: 8 }]}
-                        value={slotDate}
-                        onChangeText={setSlotDate}
-                        placeholder="YYYY-MM-DD"
-                        placeholderTextColor={Colors.textMuted}
-                        editable={false}
-                      />
-                    ) : (
-                      <Pressable style={[styles.othersInput, { marginLeft: 8, flex: 1, justifyContent: 'center' }]} onPress={() => setDatePickerVisible(true)}>
-                        <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
-                          {slotDate || 'YYYY-MM-DD'}
-                        </Text>
-                      </Pressable>
-                    )}
+                    <TextInput
+                      style={[styles.othersInput, { marginLeft: 8 }]}
+                      value={slotDate}
+                      onChangeText={setSlotDate}
+                      placeholder="DD-MM-YYYY"
+                      placeholderTextColor={Colors.textMuted}
+                      maxLength={10}
+                    />
                     <Pressable
                       hitSlop={8}
-                      onPress={() => setSlotDate(dateToIso(new Date()))}
+                      onPress={() => setSlotDate(todayDisplayDate())}
                     >
                       <Text style={{ fontSize: 11, color: Colors.neonGreen, fontWeight: '700', paddingRight: 4 }}>Today</Text>
                     </Pressable>
                   </View>
-                  {Platform.OS !== 'web' && datePickerVisible && (
-                    <DateTimePicker
-                      value={slotDate ? isoToDate(slotDate) : new Date()}
-                      mode="date"
-                      display="default"
-                      minimumDate={new Date()}
-                      onChange={(_, selectedDate) => {
-                        if (Platform.OS !== 'ios') setDatePickerVisible(false);
-                        if (selectedDate) setSlotDate(dateToIso(selectedDate));
-                      }}
-                    />
-                  )}
                 </View>
 
                 <View style={styles.slotList}>
@@ -1131,9 +1126,9 @@ export const AddSlotModal: React.FC<AddSlotModalProps> = ({ visible, onClose, on
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.saveBtn, !selectedSport && styles.saveBtnDisabled]}
+              style={[styles.saveBtn, validationError && styles.saveBtnDisabled]}
               onPress={handleSave}
-              disabled={!selectedSport}
+              disabled={!!validationError}
             >
               <LinearGradient colors={['#00FF88', '#00CC6A']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.saveBtnGrad}>
                 <MaterialIcons name="check" size={18} color={Colors.bgPrimary} />

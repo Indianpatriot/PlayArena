@@ -13,7 +13,6 @@ import {
   Platform,
   FlatList,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -57,17 +56,35 @@ function dateToIso(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+function isoToDisplayDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return y && m && d ? `${d}-${m}-${y}` : '';
+}
+
 function isoToDate(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return new Date();
   return new Date(y, m - 1, d);
 }
 
-function isValidIsoDate(iso: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
-  const [y, m, d] = iso.split('-').map(Number);
+function parseDisplayDate(input: string): Date | null {
+  if (!/^\d{2}-\d{2}-\d{4}$/.test(input.trim())) return null;
+  const [d, m, y] = input.trim().split('-').map(Number);
   const date = new Date(y, m - 1, d);
-  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return date;
+}
+
+function displayDateToIso(input: string): string | null {
+  const date = parseDisplayDate(input);
+  return date ? dateToIso(date) : null;
+}
+
+function slotStartDateTime(dateInput: string, time: string): Date | null {
+  const date = parseDisplayDate(dateInput);
+  const minutes = timeToMinutes(time);
+  if (!date || minutes < 0) return null;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(minutes / 60), minutes % 60);
 }
 
 function timeToMinutes(t: string): number {
@@ -254,15 +271,30 @@ interface EditSheetProps {
 
 function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
   const [courtName, setCourtName] = useState(slot.court_name);
-  const [slotDate, setSlotDate] = useState(slot.slot_date);
+  const [slotDate, setSlotDate] = useState(isoToDisplayDate(slot.slot_date));
   const [startTime, setStartTime] = useState(slot.start_time);
   const [endTime, setEndTime] = useState(slot.end_time);
   const [price, setPrice] = useState(slot.price);
   const [saving, setSaving] = useState(false);
-  const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [startTimePickerVisible, setStartTimePickerVisible] = useState(false);
   const [endTimePickerVisible, setEndTimePickerVisible] = useState(false);
   const expired = isExpiredSlot(slot);
+
+  const validationError = useMemo(() => {
+    if (!courtName.trim()) return 'Court name is required.';
+    if (!slotDate.trim()) return 'Date is required.';
+    const parsedDate = parseDisplayDate(slotDate);
+    if (!parsedDate) return 'Use DD-MM-YYYY format';
+    if (parsedDate < new Date(new Date().setHours(0, 0, 0, 0))) return 'Date cannot be in the past';
+    const parsedStartTime = parseManualTime(startTime);
+    const parsedEndTime = parseManualTime(endTime);
+    if (!parsedStartTime) return 'Enter a valid start time (e.g. 6:30 AM).';
+    if (!parsedEndTime) return 'Enter a valid end time (e.g. 7:30 PM).';
+    const startAt = slotStartDateTime(slotDate, parsedStartTime);
+    if (!startAt || startAt <= new Date()) return 'Slot time must be in the future';
+    if (timeToMinutes(parsedEndTime) <= timeToMinutes(parsedStartTime)) return 'End time must be after start time.';
+    return null;
+  }, [courtName, slotDate, startTime, endTime]);
 
   const handleSave = async () => {
     if (!courtName.trim()) {
@@ -273,22 +305,15 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
       Alert.alert('Validation', 'Date is required.');
       return;
     }
-    if (!isValidIsoDate(slotDate)) {
-      Alert.alert('Validation', 'Please select a valid date.');
+    if (validationError) {
+      Alert.alert('Validation', validationError);
       return;
     }
     const parsedStartTime = parseManualTime(startTime);
     const parsedEndTime = parseManualTime(endTime);
-    if (!parsedStartTime) {
-      Alert.alert('Validation', 'Enter a valid start time (e.g. 6:30 AM).');
-      return;
-    }
-    if (!parsedEndTime) {
-      Alert.alert('Validation', 'Enter a valid end time (e.g. 7:30 PM).');
-      return;
-    }
-    if (timeToMinutes(parsedEndTime) <= timeToMinutes(parsedStartTime)) {
-      Alert.alert('Validation', 'End time must be after start time.');
+    const slotDateIso = displayDateToIso(slotDate);
+    if (!parsedStartTime || !parsedEndTime || !slotDateIso) {
+      Alert.alert('Validation', 'Use DD-MM-YYYY format');
       return;
     }
 
@@ -297,7 +322,7 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
       .from('slots')
       .update({ 
         court_name: courtName.trim(), 
-        slot_date: slotDate, 
+        slot_date: slotDateIso, 
         start_time: parsedStartTime,
         end_time: parsedEndTime, 
         price: String(price || '').trim() 
@@ -336,43 +361,19 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
         />
       </View>
 
-      <Text style={es.label}>Booking Date</Text>
+      <Text style={es.label}>Date (DD-MM-YYYY)</Text>
       <View style={es.inputRow}>
         <MaterialIcons name="calendar-today" size={16} color={Colors.electricBlue} />
-        {Platform.OS === 'web' ? (
-          <TextInput
-            {...({ type: 'date' } as any)}
-            style={es.input}
-            value={slotDate}
-            onChangeText={setSlotDate}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={Colors.textMuted}
-            editable={!expired}
-          />
-        ) : (
-          <Pressable
-            style={[es.input, { justifyContent: 'center' }]}
-            onPress={() => !expired && setDatePickerVisible(true)}
-            disabled={expired}
-          >
-            <Text style={{ color: slotDate ? Colors.textPrimary : Colors.textMuted, fontWeight: '600' }}>
-              {slotDate || 'YYYY-MM-DD'}
-            </Text>
-          </Pressable>
-        )}
-      </View>
-      {Platform.OS !== 'web' && datePickerVisible && (
-        <DateTimePicker
-          value={slotDate ? isoToDate(slotDate) : new Date()}
-          mode="date"
-          display="default"
-          minimumDate={new Date()}
-          onChange={(_, selectedDate) => {
-            if (Platform.OS !== 'ios') setDatePickerVisible(false);
-            if (selectedDate) setSlotDate(dateToIso(selectedDate));
-          }}
+        <TextInput
+          style={es.input}
+          value={slotDate}
+          onChangeText={setSlotDate}
+          placeholder="DD-MM-YYYY"
+          placeholderTextColor={Colors.textMuted}
+          maxLength={10}
+          editable={!expired}
         />
-      )}
+      </View>
 
       <Text style={es.label}>Start Time</Text>
       <View style={es.inputRow}>
@@ -464,7 +465,7 @@ function EditSheet({ slot, onCancel, onSaved }: EditSheetProps) {
         <Pressable style={es.cancelBtn} onPress={onCancel}>
           <Text style={es.cancelText}>Cancel</Text>
         </Pressable>
-        <Pressable style={es.saveBtn} onPress={handleSave} disabled={saving || expired}>
+        <Pressable style={[es.saveBtn, (validationError || expired) && { opacity: 0.5 }]} onPress={handleSave} disabled={saving || expired || !!validationError}>
           <LinearGradient colors={['#00FF88', '#00CC6A']} style={es.saveBtnGrad}>
             {saving ? (
               <ActivityIndicator size="small" color={Colors.bgPrimary} />
@@ -690,7 +691,7 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
   const freeSpots = Math.max(0, Number(slot.total_slots || 1) - bookedCount);
   const spotColor = availabilityColor(freeSpots, Number(slot.total_slots || 1));
   const expired = isExpiredSlot(slot);
-  const hasAnyBookings = (slot.bookings ?? []).length > 0;
+  const hasActiveBookings = bookedCount > 0;
 
   return (
     <View style={sc.card}>
@@ -782,18 +783,14 @@ function SlotCard({ slot, onEdit, onDelete, isEditing, onEditSaved, onEditCancel
             <Text style={sc.editText}>Edit</Text>
           </Pressable>
           <Pressable
-            style={[sc.deleteBtn, hasAnyBookings && { opacity: 0.5 }]}
-            onPress={() => {
-              if (hasAnyBookings) {
-                Alert.alert('Cannot Delete', 'This slot has bookings. Deleting it may affect booking history.');
-                return;
-              }
-              onDelete(slot.id);
-            }}
-            hitSlop={6}
-            disabled={hasAnyBookings}
+            style={sc.deleteBtn}
+            onPress={() => onDelete(slot.id)}
           >
-            <MaterialIcons name="delete-outline" size={14} color={Colors.error} />
+            <MaterialIcons
+              name="delete-outline"
+              size={14}
+              color={Colors.error}
+            />
             <Text style={sc.deleteText}>Delete</Text>
           </Pressable>
         </View>
@@ -1072,39 +1069,75 @@ export const SlotsModal: React.FC<SlotsModalProps> = ({ visible, onClose }) => {
     return () => clearInterval(id);
   }, [visible]);
 
-  const handleDelete = useCallback((id: string) => {
-    const slot = allSlots.find((s) => s.id === id);
-    if (slot && isExpiredSlot(slot, nowTick)) {
-      Alert.alert('Not Allowed', 'Previous/expired slots cannot be deleted.');
+const handleDelete = useCallback(async (id: string) => {
+  const slot = allSlots.find((s) => s.id === id);
+
+  if (slot && isExpiredSlot(slot, nowTick)) {
+    Alert.alert(
+      'Not Allowed',
+      'Previous/expired slots cannot be deleted.'
+    );
+    return;
+  }
+
+  if (!user?.id) {
+    Alert.alert(
+      'Not Allowed',
+      'You must be logged in as an owner.'
+    );
+    return;
+  }
+
+  try {
+    console.log('HANDLE DELETE START');
+    console.log('DELETE QUERY START');
+
+    const { data, error } = await supabase
+      .from('slots')
+      .delete()
+      .eq('id', id)
+      .eq('owner_id', user.id)
+      .select('id');
+
+    if (error) {
+      console.log('DELETE ERROR', error);
+      Alert.alert(
+        'Delete Failed',
+        error.message
+      );
       return;
     }
 
-    Alert.alert('Delete this slot?', 'This slot will be permanently removed. Continue?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          if (!user?.id) {
-            Alert.alert('Not Allowed', 'You must be logged in as an owner.');
-            return;
-          }
+    if (!data || data.length === 0) {
+      Alert.alert(
+        'Delete Failed',
+        'No slot was deleted.'
+      );
+      return;
+    }
 
-          // Include owner_id for RLS/ownership policies.
-          const { error } = await supabase
-            .from('slots')
-            .delete()
-            .eq('id', id)
-            .eq('owner_id', user.id);
-          if (error) {
-            Alert.alert('Delete Failed', error.message);
-          } else {
-            setAllSlots((prev) => prev.filter((s) => s.id !== id));
-          }
-        },
-      },
-    ]);
-  }, [allSlots, nowTick, user?.id]);
+    console.log('DELETE SUCCESS');
+
+    setAllSlots((prev) =>
+      prev.filter((s) => s.id !== id)
+    );
+
+    await fetchSlots();
+
+    Alert.alert(
+      'Success',
+      'Slot deleted successfully',
+      [{ text: 'OK' }]
+    );
+  } catch (err: any) {
+    console.log('DELETE ERROR', err);
+
+    Alert.alert(
+      'Delete Failed',
+      err?.message || 'Unknown error'
+    );
+  }
+}, [allSlots, nowTick, user?.id, fetchSlots]);
 
   const handleEditSaved = useCallback((updated: Slot) => {
     setAllSlots((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));

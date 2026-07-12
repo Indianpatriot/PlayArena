@@ -9,6 +9,7 @@ import {
   ScrollView,
   TextInput,
   Switch,
+  Alert,
 } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -392,6 +393,44 @@ function OwnerProfileScreen({ user, onBack }: { user: AuthUser | null; onBack: (
   const [turfName, setTurfName] = useState('');
   const [location, setLocation] = useState('');
   const [phone, setPhone] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    async function loadProfile() {
+      if (!user?.id) return;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('full_name, turf_name, location, phone')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (error) {
+        Alert.alert('Profile Error', error.message);
+        return;
+      }
+      setOwnerName(data?.full_name ?? user.name ?? '');
+      setTurfName(data?.turf_name ?? '');
+      setLocation(data?.location ?? '');
+      setPhone(data?.phone ?? '');
+    }
+    loadProfile();
+  }, [user?.id, user?.name]);
+
+  const saveProfile = async () => {
+    if (!user?.id || saving) return;
+    setSaving(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        full_name: ownerName.trim() || null,
+        turf_name: turfName.trim() || null,
+        location: location.trim() || null,
+        phone: phone.trim() || null,
+      })
+      .eq('id', user.id);
+    setSaving(false);
+    if (error) Alert.alert('Save Failed', error.message);
+    else Alert.alert('Saved', 'Owner details updated.');
+  };
 
   return (
     <View style={styles.subScreen}>
@@ -427,7 +466,7 @@ function OwnerProfileScreen({ user, onBack }: { user: AuthUser | null; onBack: (
 
         <Text style={[styles.sectionGroupLabel, { marginTop: Spacing.lg }]}>Turf Details</Text>
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Turf / Ground Name</Text>
+          <Text style={styles.fieldLabel}>Ground Name</Text>
           <View style={styles.inputWrap}>
             <TextInput style={styles.input} value={turfName} onChangeText={setTurfName} placeholder="e.g. Green Arena" placeholderTextColor={Colors.textMuted} />
           </View>
@@ -439,9 +478,9 @@ function OwnerProfileScreen({ user, onBack }: { user: AuthUser | null; onBack: (
           </View>
         </View>
 
-        <Pressable style={styles.saveBtn}>
+        <Pressable style={styles.saveBtn} onPress={saveProfile} disabled={saving}>
           <LinearGradient colors={['#00BFFF', '#0099CC']} style={styles.saveBtnGrad}>
-            <Text style={styles.saveBtnText}>Save Changes</Text>
+            <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
           </LinearGradient>
         </Pressable>
       </ScrollView>

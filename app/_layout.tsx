@@ -6,10 +6,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { Colors } from '@/constants/theme';
+import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
 // Protected route guard — sits inside AuthProvider
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
+  const { isLightMode } = useTheme();
   const segments = useSegments();
   const router = useRouter();
 
@@ -32,7 +34,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: Colors.bgPrimary, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ flex: 1, backgroundColor: isLightMode ? '#F6F8FB' : Colors.bgPrimary, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={Colors.neonGreen} size="large" />
       </View>
     );
@@ -44,21 +46,25 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 export default function RootLayout() {
   return (
     <AlertProvider>
-      <SafeAreaProvider>
-        <AuthProvider>
-          <AuthGate>
-            <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="player-login" options={{ animation: 'fade' }} />
-              <Stack.Screen name="owner-login" options={{ animation: 'slide_from_right' }} />
-              <Stack.Screen name="signup" options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
-              <Stack.Screen name="dashboard" options={{ animation: 'fade' }} />
-              <Stack.Screen name="checkout" options={{ animation: 'slide_from_right' }} />
-            </Stack>
-          </AuthGate>
-        </AuthProvider>
-      </SafeAreaProvider>
+      <ThemeProvider>
+        <SafeAreaProvider>
+          <AuthProvider>
+            <AuthGate>
+              <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="player-login" options={{ animation: 'fade' }} />
+                <Stack.Screen name="owner-login" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="signup" options={{ animation: 'slide_from_bottom' }} />
+                <Stack.Screen name="forgot-password" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="dashboard" options={{ animation: 'fade' }} />
+                <Stack.Screen name="checkout" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="ticket" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="game-feedback" options={{ animation: 'slide_from_right' }} />
+              </Stack>
+            </AuthGate>
+          </AuthProvider>
+        </SafeAreaProvider>
+      </ThemeProvider>
     </AlertProvider>
   );
 }

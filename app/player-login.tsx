@@ -15,7 +15,7 @@ import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
-import { NeonButton, InputField, SocialLoginButton } from '@/components';
+import { NeonButton, InputField } from '@/components';
 import { useAlert } from '@/template';
 import { AuthService } from '@/services/auth';
 import { useAuth } from '@/hooks/useAuth';
@@ -83,19 +83,6 @@ export default function PlayerLoginScreen() {
     }
   };
 
-  const handleSocial = async (provider: 'google' | 'apple') => {
-    setLoading(true);
-    try {
-      const user = await AuthService.socialLogin(provider);
-      setUser(user);
-      router.replace('/dashboard');
-    } catch (err: any) {
-      showAlert('Not Available', err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <View style={styles.container}>
       {/* Background gradient */}
@@ -147,19 +134,6 @@ export default function PlayerLoginScreen() {
               { opacity: formOpacity, transform: [{ translateY: formY }] },
             ]}
           >
-            {/* Social Login */}
-            <View style={styles.socialRow}>
-              <SocialLoginButton provider="google" onPress={() => handleSocial('google')} />
-              <SocialLoginButton provider="apple" onPress={() => handleSocial('apple')} />
-            </View>
-
-            {/* Divider */}
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or continue with email</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
             {/* Inputs */}
             <InputField
               label="Email / Phone"
@@ -325,28 +299,6 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 10,
     gap: 0,
-  },
-  socialRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: Spacing.md,
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: Spacing.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: Colors.border,
-  },
-  dividerText: {
-    fontSize: Typography.fontSizes.xs,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   forgotWrap: {
     alignSelf: 'flex-end',

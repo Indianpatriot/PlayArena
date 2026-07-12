@@ -1,6 +1,5 @@
 export { NeonButton } from './ui/NeonButton';
 export { InputField } from './ui/InputField';
-export { SocialLoginButton } from './ui/SocialLoginButton';
 export { GlassCard } from './ui/GlassCard';
 export { LogoBadge } from './ui/LogoBadge';
 export { RoleToggle } from './ui/RoleToggle';

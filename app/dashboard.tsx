@@ -1,5 +1,5 @@
 // PlayArena — Dashboard (Post-Login Landing)
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,8 @@ import {
   Pressable,
   ActivityIndicator,
   Modal,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -17,12 +19,52 @@ import { useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, Radius } from '@/constants/theme';
 import { GlassCard, LogoBadge, LocationPicker, ProfileMenu, AddSlotModal, SlotData, SlotsModal } from '@/components';
 import { useAuth } from '@/hooks/useAuth';
+import { useTheme } from '@/contexts/ThemeContext';
 import { LocationData } from '@/services/location';
 import { PREDEFINED_SPORTS } from '@/constants/sports';
 import { supabase } from '@/services/supabase';
 
 const ACTIVE_BOOKING_STATUSES = ['pending', 'confirmed'];
 const UPCOMING_BOOKING_STATUSES = ['pending', 'confirmed'];
+
+const dashboardPalettes = {
+  dark: {
+    bg: Colors.bgPrimary,
+    bgGradient: ['#0A0F10', '#080C10'] as [string, string],
+    headerGradient: ['#0D1A12', '#080C10'] as [string, string],
+    card: Colors.bgCard,
+    cardAlt: 'rgba(255,255,255,0.06)',
+    border: Colors.bgGlassBorder,
+    borderSoft: Colors.border,
+    text: Colors.textPrimary,
+    textSecondary: Colors.textSecondary,
+    textMuted: Colors.textMuted,
+    inputBg: 'rgba(255,255,255,0.06)',
+    iconButtonBg: 'rgba(255,255,255,0.06)',
+    iconButtonBorder: Colors.border,
+    subtleGradientEnd: 'rgba(255,255,255,0.03)',
+    progressTrack: 'rgba(255,255,255,0.1)',
+  },
+  light: {
+    bg: '#F6F8FB',
+    bgGradient: ['#FDFEFF', '#EEF5F2'] as [string, string],
+    headerGradient: ['#FFFFFF', '#EAF7F1'] as [string, string],
+    card: '#FFFFFF',
+    cardAlt: '#F3F7FA',
+    border: 'rgba(17,24,39,0.10)',
+    borderSoft: 'rgba(17,24,39,0.12)',
+    text: '#111827',
+    textSecondary: '#344054',
+    textMuted: '#667085',
+    inputBg: '#FFFFFF',
+    iconButtonBg: '#FFFFFF',
+    iconButtonBorder: 'rgba(17,24,39,0.12)',
+    subtleGradientEnd: 'rgba(17,24,39,0.02)',
+    progressTrack: 'rgba(17,24,39,0.12)',
+  },
+};
+
+type DashboardPalette = typeof dashboardPalettes.dark;
 
 // ── Sport category definitions ────────────────────────────────────────────────
 const SPORT_CATEGORIES = [
@@ -59,6 +101,8 @@ interface UpcomingGame {
   startTime: string;
   endTime: string;
   location: string;
+  status?: string;
+  isCompleted?: boolean;
 }
 
 function slotEndDate(slotDate: string, endTime: string) {
@@ -131,18 +175,23 @@ function EmptyVenuesState({ onRetry }: { onRetry: () => void }) {
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
+  const { isLightMode, toggleColorMode } = useTheme();
   const router = useRouter();
+  const palette = isLightMode ? dashboardPalettes.light : dashboardPalettes.dark;
 
   const [location, setLocation] = useState<LocationData | null>(null);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [upcomingGames, setUpcomingGames] = useState<UpcomingGame[]>([]);
+  const [completedGames, setCompletedGames] = useState<UpcomingGame[]>([]);
   const [loadingUpcomingGames, setLoadingUpcomingGames] = useState(false);
   const [loadingVenues, setLoadingVenues] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   const [addSlotVisible, setAddSlotVisible] = useState(false);
   const [slotsVisible, setSlotsVisible] = useState(false);
   const [bookingsVisible, setBookingsVisible] = useState(false);
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
   const [savedSlots, setSavedSlots] = useState<SlotData[]>([]);
 
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -252,7 +301,6 @@ export default function DashboardScreen() {
 
     setLoadingUpcomingGames(true);
     try {
-      const today = todayIsoDate();
       const { data, error } = await supabase
         .from('bookings')
         .select(`
@@ -272,15 +320,15 @@ export default function DashboardScreen() {
         `)
         .eq('player_id', user.id)
         .in('status', UPCOMING_BOOKING_STATUSES)
-        .gte('slots.slot_date', today)
         .order('slot_date', { foreignTable: 'slots', ascending: true })
-        .limit(12);
+        .limit(30);
 
       if (error) throw error;
 
       const now = new Date();
-      const games = (data ?? [])
-        .filter((booking: any) => booking.slots && slotEndDate(booking.slots.slot_date, booking.slots.end_time) > now)
+      const allGames = (data ?? []).filter((booking: any) => booking.slots);
+      const games = allGames
+        .filter((booking: any) => slotEndDate(booking.slots.slot_date, booking.slots.end_time) > now)
         .sort((a: any, b: any) =>
           slotEndDate(a.slots.slot_date, a.slots.end_time).getTime() -
           slotEndDate(b.slots.slot_date, b.slots.end_time).getTime()
@@ -295,12 +343,36 @@ export default function DashboardScreen() {
           startTime: booking.slots.start_time,
           endTime: booking.slots.end_time,
           location: booking.slots.owner?.location ?? 'Unknown Location',
+          status: booking.status,
+          isCompleted: false,
+        }));
+
+      const completed = allGames
+        .filter((booking: any) => slotEndDate(booking.slots.slot_date, booking.slots.end_time) <= now)
+        .sort((a: any, b: any) =>
+          slotEndDate(b.slots.slot_date, b.slots.end_time).getTime() -
+          slotEndDate(a.slots.slot_date, a.slots.end_time).getTime()
+        )
+        .slice(0, 5)
+        .map((booking: any) => ({
+          id: booking.id,
+          sport: booking.slots.sport,
+          turfName: booking.slots.owner?.turf_name ?? 'Sports Arena',
+          courtName: booking.slots.court_name,
+          slotDate: booking.slots.slot_date,
+          startTime: booking.slots.start_time,
+          endTime: booking.slots.end_time,
+          location: booking.slots.owner?.location ?? 'Unknown Location',
+          status: booking.status,
+          isCompleted: true,
         }));
 
       setUpcomingGames(games);
+      setCompletedGames(completed);
     } catch (err) {
       console.error('Fetch upcoming games error:', err);
       setUpcomingGames([]);
+      setCompletedGames([]);
     } finally {
       setLoadingUpcomingGames(false);
     }
@@ -322,6 +394,21 @@ export default function DashboardScreen() {
   }, [logout, router]);
 
   const isOwner = user?.role === 'owner';
+  const visibleVenues = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return venues.filter((venue) => {
+      const sportMatch = selectedSport ? venue.sport === selectedSport : true;
+      if (!sportMatch) return false;
+      if (!q) return true;
+      return [
+        venue.sport,
+        venue.name,
+        venue.courtName,
+        venue.city,
+      ].some((value) => String(value ?? '').toLowerCase().includes(q));
+    });
+  }, [searchQuery, selectedSport, venues]);
+
   const handleBookSlot = async (venue: Venue) => {
     router.push({
       pathname: '/checkout' as any,
@@ -349,8 +436,8 @@ export default function DashboardScreen() {
   }, [fetchUpcomingGames, fetchVenues, isOwner, user?.id]);
 
   return (
-    <View style={styles.container}>
-      <LinearGradient colors={['#0A0F10', '#080C10']} style={StyleSheet.absoluteFillObject} />
+    <View style={[styles.container, { backgroundColor: palette.bg }]}>
+      <LinearGradient colors={palette.bgGradient} style={StyleSheet.absoluteFillObject} />
 
       {/* Sticky Header */}
       <Animated.View
@@ -360,12 +447,32 @@ export default function DashboardScreen() {
         ]}
       >
         <LinearGradient
-          colors={['#0D1A12', '#080C10']}
+          colors={palette.headerGradient}
           style={StyleSheet.absoluteFillObject}
         />
 
         <View style={styles.headerTop}>
-          <LogoBadge size="sm" />
+          <LogoBadge size="sm" textColor={palette.text} />
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={isLightMode ? 'Switch to dark mode' : 'Switch to light mode'}
+            style={[
+              styles.themeToggle,
+              {
+                backgroundColor: palette.iconButtonBg,
+                borderColor: palette.iconButtonBorder,
+              },
+            ]}
+            onPress={toggleColorMode}
+            hitSlop={12}
+          >
+            <MaterialIcons
+              name={isLightMode ? 'dark-mode' : 'light-mode'}
+              size={20}
+              color={isLightMode ? '#111827' : Colors.neonGreen}
+            />
+          </Pressable>
 
           {/* Avatar → opens ProfileMenu (no logout on tap) */}
           <Pressable
@@ -386,10 +493,10 @@ export default function DashboardScreen() {
 
         {/* Greeting + Location */}
         <View style={styles.welcomeSection}>
-          <Text style={styles.welcomeGreeting}>
+          <Text style={[styles.welcomeGreeting, { color: palette.textSecondary }]}>
             {isOwner ? 'Welcome back, Owner' : 'Good day,'}
           </Text>
-          <Text style={styles.welcomeName}>{user?.name ?? 'Player'} 👋</Text>
+          <Text style={[styles.welcomeName, { color: palette.text }]}>{user?.name ?? 'Player'} 👋</Text>
           {!isOwner ? (
             <LocationPicker location={location} onLocationChange={setLocation} />
           ) : null}
@@ -397,15 +504,20 @@ export default function DashboardScreen() {
 
         {/* Search Bar — players only */}
         {!isOwner ? (
-          <Pressable style={styles.searchBar} hitSlop={4}>
-            <MaterialIcons name="search" size={20} color={Colors.textMuted} />
-            <Text style={styles.searchPlaceholder}>
-              Search venues, sports, locations...
-            </Text>
+          <View style={[styles.searchBar, { backgroundColor: palette.inputBg, borderColor: palette.borderSoft }]}>
+            <MaterialIcons name="search" size={20} color={palette.textMuted} />
+            <TextInput
+              style={[styles.searchInput, { color: palette.text }]}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search sport, turf, court, city..."
+              placeholderTextColor={palette.textMuted}
+              returnKeyType="search"
+            />
             <View style={styles.filterBtn}>
               <MaterialIcons name="tune" size={16} color={Colors.neonGreen} />
             </View>
-          </Pressable>
+          </View>
         ) : null}
       </Animated.View>
 
@@ -424,16 +536,21 @@ export default function DashboardScreen() {
         >
           {isOwner ? (
             <OwnerDashboard
+              palette={palette}
               onAddSlot={() => setAddSlotVisible(true)}
               onViewSlots={() => setSlotsVisible(true)}
               onViewBookings={() => setBookingsVisible(true)}
+              onViewFeedback={() => setFeedbackVisible(true)}
             />
           ) : (
             <PlayerDashboard
+              palette={palette}
               selectedSport={selectedSport}
               onSelectSport={(s) => setSelectedSport(s === selectedSport ? null : s)}
               venues={venues}
+              filteredVenues={visibleVenues}
               upcomingGames={upcomingGames}
+              completedGames={completedGames}
               loadingUpcomingGames={loadingUpcomingGames}
               loadingVenues={loadingVenues}
               locationSelected={!!location}
@@ -463,6 +580,12 @@ export default function DashboardScreen() {
         ownerId={user?.id}
       />
 
+      <OwnerFeedbackModal
+        visible={feedbackVisible}
+        onClose={() => setFeedbackVisible(false)}
+        ownerId={user?.id}
+      />
+
       {/* Profile Menu */}
       <ProfileMenu
         visible={profileMenuVisible}
@@ -477,10 +600,13 @@ export default function DashboardScreen() {
 
 // ── Player Dashboard ──────────────────────────────────────────────────────────
 interface PlayerDashboardProps {
+  palette: DashboardPalette;
   selectedSport: string | null;
   onSelectSport: (sport: string) => void;
   venues: Venue[];
+  filteredVenues: Venue[];
   upcomingGames: UpcomingGame[];
+  completedGames: UpcomingGame[];
   loadingUpcomingGames: boolean;
   loadingVenues: boolean;
   locationSelected: boolean;
@@ -490,10 +616,13 @@ interface PlayerDashboardProps {
 }
 
 function PlayerDashboard({
+  palette,
   selectedSport,
   onSelectSport,
   venues,
+  filteredVenues,
   upcomingGames,
+  completedGames,
   loadingUpcomingGames,
   loadingVenues,
   locationSelected,
@@ -502,12 +631,13 @@ function PlayerDashboard({
 }: PlayerDashboardProps) {
   return (
     <View>
-      <UpcomingGamesSection games={upcomingGames} loading={loadingUpcomingGames} />
+      <UpcomingGamesSection games={upcomingGames} loading={loadingUpcomingGames} palette={palette} />
+      <CompletedGamesSection games={completedGames} loading={loadingUpcomingGames} palette={palette} />
 
       {/* Sport Categories */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Browse by Sport</Text>
+          <Text style={[styles.sectionTitle, { color: palette.text }]}>Browse by Sport</Text>
         </View>
         <ScrollView
           horizontal
@@ -523,6 +653,7 @@ function PlayerDashboard({
                 style={[
                   styles.sportChip,
                   { borderColor: isActive ? sport.color : sport.color + '40' },
+                  { backgroundColor: palette.card },
                   isActive && { backgroundColor: sport.color + '18' },
                 ]}
                 onPress={() => onSelectSport(sport.label)}
@@ -548,7 +679,7 @@ function PlayerDashboard({
       {/* Venues Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
+          <Text style={[styles.sectionTitle, { color: palette.text }]}>
             {selectedSport ? `${selectedSport} Venues` : 'Nearby Venues'}
           </Text>
           {selectedSport ? (
@@ -574,18 +705,19 @@ function PlayerDashboard({
             <VenueSkeleton />
             <VenueSkeleton />
           </View>
-        ) : venues.length === 0 ? (
+        ) : filteredVenues.length === 0 ? (
   <EmptyVenuesState onRetry={onRetry} />
 ) : (
   <>
-    <Text style={{ color: 'white', marginBottom: 10 }}>
-      Venues count: {venues.length}
+    <Text style={{ color: palette.text, marginBottom: 10 }}>
+      Venues count: {filteredVenues.length}
     </Text>
 
-    {venues.map((venue) => (
+    {filteredVenues.map((venue) => (
     <VenueCard
       key={venue.id}
       venue={venue}
+      palette={palette}
       onBook={() =>
         onBookSlot(venue)
       }
@@ -599,16 +731,16 @@ function PlayerDashboard({
 }
 
 // ── Venue Card ────────────────────────────────────────────────────────────────
-function UpcomingGamesSection({ games, loading }: { games: UpcomingGame[]; loading: boolean }) {
+function UpcomingGamesSection({ games, loading, palette }: { games: UpcomingGame[]; loading: boolean; palette: DashboardPalette }) {
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Upcoming Games</Text>
+        <Text style={[styles.sectionTitle, { color: palette.text }]}>Upcoming Games</Text>
       </View>
       {loading ? (
         <ActivityIndicator color={Colors.neonGreen} />
       ) : games.length === 0 ? (
-        <Text style={styles.upcomingEmpty}>No upcoming games</Text>
+        <Text style={[styles.upcomingEmpty, { color: palette.textMuted }]}>No upcoming games</Text>
       ) : (
         <ScrollView
           horizontal
@@ -617,7 +749,7 @@ function UpcomingGamesSection({ games, loading }: { games: UpcomingGame[]; loadi
           nestedScrollEnabled
         >
           {games.map((game) => (
-            <UpcomingGameCard key={game.id} game={game} />
+            <UpcomingGameCard key={game.id} game={game} palette={palette} />
           ))}
         </ScrollView>
       )}
@@ -625,11 +757,16 @@ function UpcomingGamesSection({ games, loading }: { games: UpcomingGame[]; loadi
   );
 }
 
-function UpcomingGameCard({ game }: { game: UpcomingGame }) {
+function UpcomingGameCard({ game, palette }: { game: UpcomingGame; palette: DashboardPalette }) {
   const meta = sportMeta(game.sport);
+  const router = useRouter();
+
   return (
-    <View style={styles.upcomingCard}>
-      <LinearGradient colors={['rgba(0,255,136,0.10)', 'rgba(255,255,255,0.03)']} style={StyleSheet.absoluteFillObject} />
+    <Pressable
+      style={[styles.upcomingCard, { backgroundColor: palette.card, borderColor: palette.border }]}
+      onPress={() => router.push({ pathname: '/ticket' as any, params: { bookingId: game.id } })}
+    >
+      <LinearGradient colors={['rgba(0,255,136,0.10)', palette.subtleGradientEnd]} style={StyleSheet.absoluteFillObject} />
       <View style={styles.upcomingTopRow}>
         <View style={[styles.upcomingIcon, { borderColor: meta.color + '55', backgroundColor: meta.color + '18' }]}>
           <MaterialCommunityIcons name={meta.icon as any} size={20} color={meta.color} />
@@ -638,37 +775,79 @@ function UpcomingGameCard({ game }: { game: UpcomingGame }) {
           <Text style={styles.upcomingBadgeText}>Upcoming</Text>
         </View>
       </View>
-      <Text style={styles.upcomingSport}>{game.sport}</Text>
-      <Text style={styles.upcomingTurf} numberOfLines={1}>{game.turfName}</Text>
-      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.courtName}</Text>
-      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.slotDate}</Text>
-      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.startTime} - {game.endTime}</Text>
-      <Text style={styles.upcomingMeta} numberOfLines={1}>{game.location}</Text>
+      <Text style={[styles.upcomingSport, { color: palette.text }]}>{game.sport}</Text>
+      <Text style={[styles.upcomingTurf, { color: palette.textSecondary }]} numberOfLines={1}>{game.turfName}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.courtName}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.slotDate}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.startTime} - {game.endTime}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.location}</Text>
+    </Pressable>
+  );
+}
+
+function CompletedGamesSection({ games, loading, palette }: { games: UpcomingGame[]; loading: boolean; palette: DashboardPalette }) {
+  if (loading || games.length === 0) return null;
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <Text style={[styles.sectionTitle, { color: palette.text }]}>Completed Games</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList} nestedScrollEnabled>
+        {games.map((game) => (
+          <CompletedGameCard key={game.id} game={game} palette={palette} />
+        ))}
+      </ScrollView>
     </View>
   );
 }
 
-const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Venue;  onBook: () => void }) {
+function CompletedGameCard({ game, palette }: { game: UpcomingGame; palette: DashboardPalette }) {
+  const router = useRouter();
+  const meta = sportMeta(game.sport);
+  return (
+    <Pressable
+      style={[styles.upcomingCard, { backgroundColor: palette.card, borderColor: palette.border }]}
+      onPress={() => router.push({ pathname: '/game-feedback' as any, params: { bookingId: game.id } })}
+    >
+      <LinearGradient colors={['rgba(255,184,0,0.10)', palette.subtleGradientEnd]} style={StyleSheet.absoluteFillObject} />
+      <View style={styles.upcomingTopRow}>
+        <View style={[styles.upcomingIcon, { borderColor: meta.color + '55', backgroundColor: meta.color + '18' }]}>
+          <MaterialCommunityIcons name={meta.icon as any} size={20} color={meta.color} />
+        </View>
+        <View style={[styles.upcomingBadge, { backgroundColor: 'rgba(255,184,0,0.12)' }]}>
+          <Text style={[styles.upcomingBadgeText, { color: '#FFB800' }]}>Feedback</Text>
+        </View>
+      </View>
+      <Text style={[styles.upcomingSport, { color: palette.text }]}>{game.sport}</Text>
+      <Text style={[styles.upcomingTurf, { color: palette.textSecondary }]} numberOfLines={1}>{game.turfName}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.courtName}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.slotDate}</Text>
+      <Text style={[styles.upcomingMeta, { color: palette.textMuted }]} numberOfLines={1}>{game.startTime} - {game.endTime}</Text>
+    </Pressable>
+  );
+}
+
+const VenueCard = React.memo(function VenueCard({ venue, onBook, palette, }: { venue: Venue; onBook: () => void; palette: DashboardPalette }) {
   const availability = availabilityColor(venue.freeSlots, venue.totalSlots);
   const sportEntry = PREDEFINED_SPORTS.find((s) => s.key.toLowerCase() === venue.sport?.toLowerCase());
   const isPool = !!sportEntry?.isPool;
   const capacityPercent = Math.round((venue.freeSlots / Math.max(1, venue.totalSlots)) * 100);
   
   return (
-    <Pressable style={styles.venueCard}>
+    <Pressable style={[styles.venueCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
       <LinearGradient
-        colors={['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.02)']}
+        colors={['rgba(0,255,136,0.04)', palette.subtleGradientEnd]}
         style={StyleSheet.absoluteFillObject}
       />
 <View style={{ flex: 1, marginLeft: 12 }}>
   {/* Top section */}
-    <Text style={styles.venueName}>
+    <Text style={[styles.venueName, { color: palette.text }]}>
       {venue.name}
     </Text>
 
     <Text
       style={{
-        color: Colors.textMuted,
+        color: palette.textMuted,
         fontSize: 13,
         marginBottom: 6,
       }}
@@ -678,7 +857,7 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
 
     <Text
       style={{
-        color: '#fff',
+        color: palette.text,
         fontWeight: '700',
         fontSize: 16,
       }}
@@ -686,13 +865,13 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
       {venue.courtName}
     </Text>
 
-  <Text style={styles.venueSport}>
+  <Text style={[styles.venueSport, { color: palette.textMuted }]}>
     {venue.sport}
   </Text>
 
   <Text
     style={{
-      color: Colors.textMuted,
+      color: palette.textMuted,
       fontSize: 12,
       marginTop: 4,
     }}
@@ -702,7 +881,7 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
 
   <Text
     style={{
-      color: Colors.textMuted,
+      color: palette.textMuted,
       fontSize: 12,
     }}
   >
@@ -713,14 +892,14 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
   {isPool && (
     <View style={{ marginTop: 10, marginBottom: 8 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-        <Text style={{ fontSize: 12, color: Colors.textMuted }}>Pool Capacity</Text>
+        <Text style={{ fontSize: 12, color: palette.textMuted }}>Pool Capacity</Text>
         <Text style={{ fontSize: 12, fontWeight: '700', color: availability }}>
           {venue.freeSlots}/{venue.totalSlots} spots left
         </Text>
       </View>
       <View style={{
         height: 6,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: palette.progressTrack,
         borderRadius: 3,
         overflow: 'hidden',
       }}>
@@ -747,7 +926,7 @@ const VenueCard = React.memo(function VenueCard({ venue, onBook, }: { venue: Ven
     <View>
       <Text
         style={{
-          color: '#fff',
+          color: palette.text,
           fontWeight: '800',
           fontSize: 22,
         }}
@@ -817,12 +996,26 @@ function OwnerBookingsModal({ visible, onClose, ownerId }: { visible: boolean; o
       .order('booking_date', { ascending: false });
     setLoading(false);
 
-    setBookings(error ? [] : data ?? []);
+    if (error) {
+      Alert.alert('Bookings Error', error.message);
+      setBookings([]);
+      return;
+    }
+    setBookings(data ?? []);
   }, [ownerId]);
 
   useEffect(() => {
     if (visible) fetchBookings();
   }, [visible, fetchBookings]);
+
+  const groupedBookings = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    bookings.forEach((booking) => {
+      const sport = booking.slots?.sport ?? 'Other';
+      groups[sport] = [...(groups[sport] ?? []), booking];
+    });
+    return Object.entries(groups);
+  }, [bookings]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -851,17 +1044,125 @@ function OwnerBookingsModal({ visible, onClose, ownerId }: { visible: boolean; o
                 <Text style={styles.ownerBookingsEmptyText}>No bookings yet</Text>
               </View>
             ) : (
-              bookings.map((booking) => (
-                <View key={booking.id} style={styles.ownerBookingCard}>
+              groupedBookings.map(([sport, sportBookings]) => (
+                <View key={sport} style={styles.ownerBookingGroup}>
+                  <Text style={styles.ownerBookingGroupTitle}>{sport}</Text>
+                  {sportBookings.map((booking) => (
+                    <View key={booking.id} style={styles.ownerBookingCard}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.ownerBookingPlayer}>{booking.player?.full_name ?? 'Player'}</Text>
+                        <Text style={styles.ownerBookingSport}>{booking.slots?.sport ?? 'Sport'}</Text>
+                        <Text style={styles.ownerBookingMeta}>{booking.slots?.court_name ?? 'Court'} - {booking.slots?.slot_date}</Text>
+                        <Text style={styles.ownerBookingMeta}>{booking.slots?.start_time} - {booking.slots?.end_time}</Text>
+                      </View>
+                      <View style={styles.ownerBookingRight}>
+                        <Text style={styles.ownerBookingPrice}>Rs {booking.slots?.price ?? '--'}</Text>
+                        <Text style={styles.ownerBookingStatus}>{booking.status ?? 'booked'}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OwnerFeedbackModal({ visible, onClose, ownerId }: { visible: boolean; onClose: () => void; ownerId?: string }) {
+  const [feedback, setFeedback] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<'new' | 'reviewed'>('new');
+
+  const fetchFeedback = useCallback(async () => {
+    if (!ownerId) return;
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('feedbacks')
+      .select('id, rating, feedback_text, created_at, player:profiles!feedbacks_player_id_fkey(full_name), slots!feedbacks_slot_id_fkey(sport, owner:profiles!slots_owner_id_fkey(turf_name))')
+      .eq('owner_id', ownerId)
+      .order('created_at', { ascending: false });
+    setLoading(false);
+    if (error) {
+      Alert.alert('Feedback Error', error.message);
+      setFeedback([]);
+      return;
+    }
+    setFeedback(data ?? []);
+  }, [ownerId]);
+
+  useEffect(() => {
+    if (visible) fetchFeedback();
+  }, [visible, fetchFeedback]);
+
+  const markReviewed = async (id: string) => {
+    Alert.alert('Review Not Available', 'The feedbacks table does not include a reviewed column.');
+  };
+
+  const avg = feedback.length
+    ? (feedback.reduce((sum, item) => sum + Number(item.rating || 0), 0) / feedback.length).toFixed(1)
+    : '--';
+  const visibleFeedback = feedback.filter((item) => tab === 'reviewed' ? !!item.reviewed : !item.reviewed);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.ownerBookingsOverlay}>
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <View style={styles.ownerBookingsSheet}>
+          <View style={styles.ownerBookingsHeader}>
+            <View>
+              <Text style={styles.ownerBookingsTitle}>Feedback</Text>
+              <Text style={styles.ownerBookingsSubtitle}>{avg === '--' ? 'No ratings yet' : `${avg} average rating`}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.ownerBookingsClose} hitSlop={12}>
+              <MaterialIcons name="close" size={20} color={Colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <View style={styles.feedbackTabs}>
+            {[
+              { key: 'new', label: 'New Feedback' },
+              { key: 'reviewed', label: 'Reviewed Feedback' },
+            ].map((item) => (
+              <Pressable key={item.key} style={[styles.feedbackTab, tab === item.key && styles.feedbackTabActive]} onPress={() => setTab(item.key as any)}>
+                <Text style={[styles.feedbackTabText, tab === item.key && styles.feedbackTabTextActive]}>{item.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <ScrollView contentContainerStyle={styles.ownerBookingsContent} showsVerticalScrollIndicator={false}>
+            {loading ? (
+              <View style={styles.ownerBookingsEmpty}>
+                <ActivityIndicator color={Colors.neonGreen} />
+                <Text style={styles.ownerBookingsEmptyText}>Loading feedback...</Text>
+              </View>
+            ) : visibleFeedback.length === 0 ? (
+              <View style={styles.ownerBookingsEmpty}>
+                <MaterialIcons name="rate-review" size={42} color={Colors.textMuted} />
+                <Text style={styles.ownerBookingsEmptyText}>No {tab === 'new' ? 'new' : 'reviewed'} feedback</Text>
+              </View>
+            ) : (
+              visibleFeedback.map((item) => (
+                <View key={item.id} style={styles.feedbackCard}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.ownerBookingPlayer}>{booking.player?.full_name ?? 'Player'}</Text>
-                    <Text style={styles.ownerBookingSport}>{booking.slots?.sport ?? 'Sport'}</Text>
-                    <Text style={styles.ownerBookingMeta}>{booking.slots?.court_name ?? 'Court'} - {booking.slots?.slot_date}</Text>
-                    <Text style={styles.ownerBookingMeta}>{booking.slots?.start_time} - {booking.slots?.end_time}</Text>
+                    <Text style={styles.ownerBookingPlayer}>{item.player?.full_name ?? 'Player'}</Text>
+                    <Text style={styles.ownerBookingSport}>{item.slots?.sport ?? 'Sport'}</Text>
+                    <Text style={styles.ownerBookingMeta}>Turf: {item.slots?.owner?.turf_name ?? 'Turf'}</Text>
+                    <Text style={styles.ownerBookingMeta}>{item.feedback_text || 'No written feedback'}</Text>
+                    <Text style={styles.ownerBookingMeta}>{item.created_at ? new Date(item.created_at).toLocaleDateString('en-IN') : ''}</Text>
                   </View>
                   <View style={styles.ownerBookingRight}>
-                    <Text style={styles.ownerBookingPrice}>Rs {booking.slots?.price ?? '--'}</Text>
-                    <Text style={styles.ownerBookingStatus}>{booking.status ?? 'booked'}</Text>
+                    <View style={styles.ratingPill}>
+                      <MaterialIcons name="star" size={14} color="#FFB800" />
+                      <Text style={styles.ratingPillText}>{item.rating}</Text>
+                    </View>
+                    {!item.reviewed ? (
+                      <Pressable style={styles.markReviewedBtn} onPress={() => markReviewed(item.id)}>
+                        <Text style={styles.markReviewedText}>Mark Reviewed</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 </View>
               ))
@@ -873,47 +1174,94 @@ function OwnerBookingsModal({ visible, onClose, ownerId }: { visible: boolean; o
   );
 }
 
-function OwnerDashboard({ onAddSlot, onViewSlots, onViewBookings }: { onAddSlot: () => void; onViewSlots: () => void; onViewBookings: () => void }) {
-  const stats = [
-    { label: 'Today Bookings', value: '—', icon: 'calendar-today', color: '#00FF88' },
-    { label: "Today's Revenue", value: '—', icon: 'trending-up', color: '#00BFFF' },
-    { label: 'Free Slots', value: '—', icon: 'access-time', color: '#FFB800' },
-    { label: 'Avg Rating', value: '—', icon: 'star', color: '#FF6B6B' },
+function OwnerDashboard({
+  palette,
+  onAddSlot,
+  onViewSlots,
+  onViewBookings,
+  onViewFeedback,
+}: {
+  palette: DashboardPalette;
+  onAddSlot: () => void;
+  onViewSlots: () => void;
+  onViewBookings: () => void;
+  onViewFeedback: () => void;
+}) {
+  const { user } = useAuth();
+  const [overview, setOverview] = useState({ bookings: '0', revenue: 'Rs 0', freeSlots: '0', avgRating: '--' });
+  const [feedback, setFeedback] = useState<any[]>([]);
+  const [loadingOverview, setLoadingOverview] = useState(false);
+
+  const loadOwnerData = useCallback(async () => {
+    if (!user?.id) return;
+    setLoadingOverview(true);
+    const today = todayIsoDate();
+    const [bookingsRes, slotsRes, feedbackRes, ratingsRes] = await Promise.all([
+      supabase.from('bookings').select('id, status, slots!inner(slot_date, price)').eq('owner_id', user.id).eq('slots.slot_date', today),
+      supabase.from('slots').select('id, total_slots, slot_date, end_time, bookings(status)').eq('owner_id', user.id).eq('slot_date', today),
+      supabase
+        .from('feedbacks')
+        .select('*, player:profiles!feedbacks_player_id_fkey(full_name), slots!feedbacks_slot_id_fkey(sport, court_name, owner:profiles!slots_owner_id_fkey(turf_name))')
+        .eq('owner_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(8),
+      supabase.from('feedbacks').select('rating').eq('owner_id', user.id),
+    ]);
+    const bookings = bookingsRes.data ?? [];
+    const revenue = bookings
+      .filter((booking: any) => booking.status === 'confirmed')
+      .reduce((sum: number, booking: any) => sum + Number(booking.slots?.price || 0), 0);
+    const freeSlots = (slotsRes.data ?? [])
+      .filter((slot: any) => slotEndDate(slot.slot_date, slot.end_time) > new Date())
+      .reduce((sum: number, slot: any) => {
+        const booked = (slot.bookings ?? []).filter((b: any) => ACTIVE_BOOKING_STATUSES.includes(b.status)).length;
+        return sum + Math.max(0, Number(slot.total_slots || 1) - booked);
+      }, 0);
+    const feedbackRows = feedbackRes.data ?? [];
+    const ratingRows = ratingsRes.data ?? [];
+    const avg = ratingRows.length ? ratingRows.reduce((sum: number, item: any) => sum + Number(item.rating || 0), 0) / ratingRows.length : 0;
+    setOverview({ bookings: String(bookings.length), revenue: `Rs ${revenue}`, freeSlots: String(freeSlots), avgRating: avg ? avg.toFixed(1) : '--' });
+    setFeedback(feedbackRows);
+    setLoadingOverview(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    loadOwnerData();
+  }, [loadOwnerData]);
+
+  const liveStats = [
+    { label: 'Today Bookings', value: overview.bookings, icon: 'calendar-today', color: '#00FF88' },
+    { label: "Today's Revenue", value: overview.revenue, icon: 'trending-up', color: '#00BFFF' },
+    { label: 'Free Slots', value: overview.freeSlots, icon: 'access-time', color: '#FFB800' },
+    { label: 'Avg Rating', value: overview.avgRating, icon: 'star', color: '#FF6B6B' },
   ];
 
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Quick Overview</Text>
+      <Text style={[styles.sectionTitle, { color: palette.text }]}>Quick Overview</Text>
 
       <View style={styles.statsGrid}>
-        {stats.map((s) => (
-          <View key={s.label} style={[styles.statCard, { borderColor: s.color + '30' }]}>
+        {liveStats.map((s) => (
+          <View key={s.label} style={[styles.statCard, { borderColor: s.color + '30', backgroundColor: palette.card }]}>
             <LinearGradient
               colors={[s.color + '15', s.color + '05']}
               style={StyleSheet.absoluteFillObject}
             />
             <MaterialIcons name={s.icon as any} size={20} color={s.color} />
             <Text style={[styles.statValue, { color: s.color }]}>{s.value}</Text>
-            <Text style={styles.statLabel}>{s.label}</Text>
+            <Text style={[styles.statLabel, { color: palette.textMuted }]}>{s.label}</Text>
           </View>
         ))}
       </View>
 
-      <GlassCard variant="blue" padding={16}>
-        <View style={styles.apiNotice}>
-          <MaterialIcons name="info-outline" size={18} color={Colors.electricBlue} />
-          <Text style={styles.apiNoticeText}>
-            Live booking data will appear here once connected to the backend.
-          </Text>
-        </View>
-      </GlassCard>
+      {loadingOverview ? <ActivityIndicator color={Colors.neonGreen} /> : null}
 
       <View style={styles.ownerActions}>
         {[
           { icon: 'add-circle-outline', label: 'Add Slot', color: Colors.neonGreen, onPress: onAddSlot },
           { icon: 'event-note', label: 'Slots', color: Colors.electricBlue, onPress: onViewSlots },
           { icon: 'people', label: 'Bookings', color: '#FFB800', onPress: onViewBookings },
-          { icon: 'settings', label: 'Settings', color: Colors.textSecondary, onPress: undefined as any },
+          { icon: 'rate-review', label: 'Feedback', color: Colors.textSecondary, onPress: onViewFeedback },
         ].map((a) => (
           <Pressable key={a.label} style={styles.ownerActionBtn} onPress={a.onPress}>
             <View
@@ -921,9 +1269,34 @@ function OwnerDashboard({ onAddSlot, onViewSlots, onViewBookings }: { onAddSlot:
             >
               <MaterialIcons name={a.icon as any} size={22} color={a.color} />
             </View>
-            <Text style={styles.ownerActionLabel}>{a.label}</Text>
+            <Text style={[styles.ownerActionLabel, { color: palette.textSecondary }]}>{a.label}</Text>
           </Pressable>
         ))}
+      </View>
+
+      <View style={styles.feedbackSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: palette.text }]}>Player Feedback</Text>
+          <Text style={styles.feedbackAvg}>{overview.avgRating === '--' ? 'No ratings' : `${overview.avgRating} avg`}</Text>
+        </View>
+        {feedback.length === 0 ? (
+          <Text style={[styles.upcomingEmpty, { color: palette.textMuted }]}>No feedback yet</Text>
+        ) : (
+          feedback.map((item) => (
+            <View key={item.id} style={[styles.feedbackCard, { backgroundColor: palette.card, borderColor: palette.borderSoft }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.ownerBookingPlayer, { color: palette.text }]}>{item.player?.full_name ?? 'Player'}</Text>
+                <Text style={styles.ownerBookingSport}>{item.slots?.sport ?? 'Sport'} - {item.slots?.owner?.turf_name ?? 'Turf'}</Text>
+                <Text style={[styles.ownerBookingMeta, { color: palette.textMuted }]}>{item.feedback_text || 'No written feedback'}</Text>
+                <Text style={[styles.ownerBookingMeta, { color: palette.textMuted }]}>{item.created_at ? new Date(item.created_at).toLocaleDateString('en-IN') : ''}</Text>
+              </View>
+              <View style={styles.ratingPill}>
+                <MaterialIcons name="star" size={14} color="#FFB800" />
+                <Text style={styles.ratingPillText}>{item.rating}</Text>
+              </View>
+            </View>
+          ))
+        )}
       </View>
     </View>
   );
@@ -949,6 +1322,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  themeToggle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   avatarBtn: {
     // Pressable wraps the gradient — keep it simple
@@ -993,6 +1374,13 @@ const styles = StyleSheet.create({
     flex: 1,
     color: Colors.textMuted,
     fontSize: Typography.fontSizes.sm,
+  },
+  searchInput: {
+    flex: 1,
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSizes.sm,
+    paddingVertical: 0,
+    outlineStyle: 'none' as any,
   },
   filterBtn: {
     width: 32,
@@ -1331,6 +1719,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  feedbackSection: {
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  feedbackAvg: {
+    color: '#FFB800',
+    fontSize: Typography.fontSizes.xs,
+    fontWeight: '800',
+  },
+  feedbackCard: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bgCard,
+  },
+  ratingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 3,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(255,184,0,0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  ratingPillText: {
+    color: '#FFB800',
+    fontSize: Typography.fontSizes.xs,
+    fontWeight: '900',
+  },
   ownerActionBtn: {
     alignItems: 'center',
     gap: 8,
@@ -1397,6 +1818,14 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     gap: Spacing.md,
   },
+  ownerBookingGroup: {
+    gap: Spacing.sm,
+  },
+  ownerBookingGroupTitle: {
+    color: Colors.textPrimary,
+    fontSize: Typography.fontSizes.base,
+    fontWeight: '900',
+  },
   ownerBookingsEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -1416,6 +1845,46 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.bgCard,
+  },
+  feedbackTabs: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+  },
+  feedbackTab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  feedbackTabActive: {
+    borderColor: Colors.neonGreen + '70',
+    backgroundColor: 'rgba(0,255,136,0.10)',
+  },
+  feedbackTabText: {
+    color: Colors.textMuted,
+    fontSize: Typography.fontSizes.xs,
+    fontWeight: '800',
+  },
+  feedbackTabTextActive: {
+    color: Colors.neonGreen,
+  },
+  markReviewedBtn: {
+    marginTop: Spacing.sm,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.neonGreen + '55',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  markReviewedText: {
+    color: Colors.neonGreen,
+    fontSize: 10,
+    fontWeight: '900',
   },
   ownerBookingPlayer: {
     color: Colors.textPrimary,
